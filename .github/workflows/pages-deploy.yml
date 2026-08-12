@@ -23,15 +23,9 @@ jobs:
 
       - uses: actions/configure-pages@v5
 
-      - name: Prepare site artifact
-        shell: bash
-        run: |
-          mkdir _site
-          rsync -a --exclude '.git' --exclude '.github' --exclude '_site' ./ _site/
-
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: _site
+          path: site
 
       - name: Deploy GitHub Pages
         id: deployment
