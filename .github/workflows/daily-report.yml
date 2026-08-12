@@ -101,9 +101,9 @@ jobs:
         shell: bash
         run: |
           PUBLISH_DIR="$(mktemp -d)"
-          mkdir -p "$PUBLISH_DIR/site" "$PUBLISH_DIR/.github/workflows"
-          cp -a site/. "$PUBLISH_DIR/site/"
-          touch "$PUBLISH_DIR/site/.nojekyll"
+          mkdir -p "$PUBLISH_DIR/.github/workflows"
+          cp -a site/. "$PUBLISH_DIR/"
+          touch "$PUBLISH_DIR/.nojekyll"
           cp .github/workflows/pages-deploy.yml "$PUBLISH_DIR/.github/workflows/pages-deploy.yml"
           cd "$PUBLISH_DIR"
           git init
@@ -112,7 +112,7 @@ jobs:
           git checkout -b gh-pages
           git add .
           git commit -m "Deploy report from ${GITHUB_SHA}"
-          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git remote add origin "{{https://github.com/${GITHUB_REPOSITORY}}}.git"
           gh auth setup-git
           git push --force origin gh-pages
 
