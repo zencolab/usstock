@@ -1,0 +1,19 @@
+{
+  "人工智能": ["artificial intelligence", "machine learning", "generative ai", "neural network", "ai platform"],
+  "云计算": ["cloud computing", "cloud platform", "software as a service", "saas", "infrastructure as a service"],
+  "半导体": ["semiconductor", "integrated circuit", "microprocessor", "chip design", "foundry"],
+  "网络安全": ["cybersecurity", "network security", "endpoint security", "identity security"],
+  "电动车": ["electric vehicle", "ev manufacturer", "battery electric", "charging network"],
+  "清洁能源": ["renewable energy", "solar power", "wind power", "clean energy", "energy storage"],
+  "机器人": ["robotics", "industrial automation", "autonomous robot"],
+  "生物科技": ["biotechnology", "biopharmaceutical", "gene therapy", "cell therapy"],
+  "金融科技": ["fintech", "digital payments", "payment platform", "online brokerage"],
+  "电子商务": ["e-commerce", "ecommerce", "online marketplace", "digital commerce"],
+  "流媒体": ["streaming service", "streaming media", "video streaming", "music streaming"],
+  "航空航天": ["aerospace", "space technology", "satellite", "launch vehicle"],
+  "国防军工": ["defense contractor", "defense systems", "military technology"],
+  "量子计算": ["quantum computing", "quantum processor", "quantum technology"],
+  "区块链": ["blockchain", "digital asset", "cryptocurrency", "bitcoin mining"],
+  "医疗器械": ["medical device", "diagnostic equipment", "surgical system"],
+  "消费品牌": ["consumer brand", "apparel", "restaurant chain", "consumer products"]
+}
