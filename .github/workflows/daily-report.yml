@@ -1,0 +1,114 @@
+name: US market close report
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    # Runs after the regular US close and follows daylight-saving time.
+    - cron: "30 18 * * 1-5"
+      timezone: "America/New_York"
+  workflow_dispatch:
+    inputs:
+      trade_date:
+        description: "Trading date (YYYY-MM-DD); blank = latest completed session"
+        required: false
+        type: string
+      mode:
+        description: "Data mode"
+        required: true
+        default: "live"
+        type: choice
+        options:
+          - live
+          - demo
+      top_n:
+        description: "Number of gainers and losers"
+        required: true
+        default: "100"
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: market-close-report
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore API cache
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: market-cache-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            market-cache-${{ runner.os }}-
+
+      - name: Generate report
+        env:
+          MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          MASSIVE_RPM: ${{ secrets.MASSIVE_RPM || '5' }}
+        shell: bash
+        run: |
+          MODE="${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'live' }}"
+          TOP_N="${{ github.event_name == 'workflow_dispatch' && inputs.top_n || '100' }}"
+          TRADE_DATE="${{ github.event_name == 'workflow_dispatch' && inputs.trade_date || '' }}"
+          if [[ "$MODE" == "live" && -z "${MASSIVE_API_KEY:-}" ]]; then
+            echo "::warning::MASSIVE_API_KEY is not configured; deploying demo data until the secret is added."
+            MODE="demo"
+          fi
+          DATE_ARG=()
+          if [[ -n "$TRADE_DATE" ]]; then DATE_ARG=(--date "$TRADE_DATE"); fi
+          python market_report.py \
+            --mode "$MODE" \
+            --top-n "$TOP_N" \
+            --output site \
+            --data-output output \
+            "${DATE_ARG[@]}"
+          python scripts/validate_output.py site --expected-min "$TOP_N"
+
+      - name: Upload dated data and report
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-report-${{ github.run_id }}
+          path: |
+            site
+            output
+          retention-days: 90
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
