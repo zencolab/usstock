@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="{{ stock.symbol }} 收盘行情、基本面与卖空数据">
+  <title>{{ stock.symbol }} · {{ report_date }}</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="container breadcrumb"><a href="../index.html">← 返回日报</a></div>
+<header class="hero">
+  <div class="container">
+    <div class="stock-title">
+      <div>
+        <div class="eyebrow">{{ stock.name }}</div>
+        <h1>{{ stock.symbol }}</h1>
+        <p class="subhead">{{ stock.industry or '行业未披露' }} · {{ report_date }} 收盘</p>
+      </div>
+      <div class="big-delta {{ 'positive' if stock.change_pct > 0 else 'negative' }}">{{ stock.change_pct|pct }}</div>
+    </div>
+    <div class="metric-grid">
+      <div class="metric"><div class="label">收盘价</div><div class="value">{{ stock.close|number }}</div></div>
+      <div class="metric"><div class="label">市值</div><div class="value">{{ stock.market_cap|money }}</div></div>
+      <div class="metric"><div class="label">P/E</div><div class="value">{{ stock.pe|ratio }}</div></div>
+      <div class="metric"><div class="label">最新年报收入</div><div class="value">{{ stock.revenue|money }}</div></div>
+      <div class="metric"><div class="label">估算换手率</div><div class="value">{{ stock.turnover_pct|pct_plain }}</div></div>
+    </div>
+    <div class="tag-row">
+      {% for concept in stock.concepts %}<span class="tag accent">{{ concept }}</span>{% endfor %}
+      {% if not stock.concepts %}<span class="tag">未匹配自定义概念</span>{% endif %}
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="section">
+    <div class="container grid-2">
+      <article class="card">
+        <h2>主营业务</h2>
+        <p class="copy">{{ stock.description or '数据源未返回业务简介。' }}</p>
+      </article>
+      <article class="card">
+        <h2>公司与交易口径</h2>
+        <dl class="definition-list">
+          <dt>行业</dt><dd>{{ stock.industry or '—' }}</dd>
+          <dt>当日成交量</dt><dd>{{ stock.volume|integer }}</dd>
+          <dt>股份数口径</dt><dd>{{ stock.shares_outstanding|integer }}</dd>
+          <dt>EPS 口径</dt><dd>{{ stock.eps|ratio }}</dd>
+          <dt>CIK</dt><dd>{{ stock.cik or '—' }}</dd>
+        </dl>
+      </article>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <h2>近半年价格</h2>
+      <div class="card chart">{{ stock.price_chart|safe }}</div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container grid-2">
+      <article>
+        <h2>日度卖空成交量</h2>
+        <div class="card chart">{{ stock.short_volume_chart|safe }}</div>
+        <p class="copy">FINRA Consolidated NMS 场外卖空成交量；悬停数据点可查看日期、数量和占 FINRA 总量的比例。</p>
+      </article>
+      <article>
+        <h2>空头持仓数量</h2>
+        <div class="card chart">{{ stock.short_interest_chart|safe }}</div>
+        <p class="copy">Short interest 按监管发布节奏更新，通常每月两次，因此折线不会每天变化。</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container grid-2">
+      <article class="card">
+        <h2>股东与内部人申报摘要</h2>
+        <p>{{ stock.ownership.summary }}</p>
+        {% if stock.ownership.filings %}
+        <ul class="filings">
+          {% for filing in stock.ownership.filings %}
+          <li><a href="{{ filing.url }}" rel="noopener noreferrer">{{ filing.form }} · {{ filing.filing_date }}</a></li>
+          {% endfor %}
+        </ul>
+        {% else %}<p class="copy">最近申报列表中没有匹配的 13D/13G 或 Form 4。</p>{% endif %}
+      </article>
+      <article class="card">
+        <h2>解释与限制</h2>
+        <p class="copy">这里的“股东情况”是 SEC 受益所有权与内部人申报摘要，不是完整前十大机构股东榜。完整机构持仓通常需要 13F 聚合或商业数据授权。</p>
+        <p class="copy">P/E、收入和股份数来自最新可用监管申报，可能与实时商业终端的 TTM 口径不同。</p>
+      </article>
+    </div>
+  </section>
+</main>
+<footer class="footer"><div class="container">数据仅用于研究，不构成投资建议。报告日期 {{ report_date }}。</div></footer>
+</body>
+</html>

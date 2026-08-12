@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="美股收盘日报：三大指数、涨跌幅榜、基本面与卖空数据">
+  <title>美股收盘日报 · {{ report_date }}</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="hero">
+  <div class="container">
+    <div class="eyebrow">US Market Close · {{ report_date }}</div>
+    <h1>美股收盘日报</h1>
+    <p class="subhead">三大指数、全市场涨跌幅榜、半年价格走势、公司基本面与卖空数据。报告按 {{ generated_at }} 生成。</p>
+    <div class="meta-row">
+      <span class="source-badge">模式：{{ mode }}</span>
+      <span class="source-badge">交易日：{{ report_date }}</span>
+      <span class="source-badge">涨/跌各 {{ top_n }} 只</span>
+      <span class="source-badge">价格 ≥ {{ min_price }}</span>
+      <span class="source-badge">成交额 ≥ {{ min_dollar_volume|money }}</span>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="section" aria-labelledby="indices-title">
+    <div class="container">
+      <h2 id="indices-title">三大指数</h2>
+      <div class="grid-3">
+        {% for item in indices %}
+        <article class="card index-card">
+          <div class="index-top">
+            <div>
+              <h3>{{ item.name }}</h3>
+              <div class="price">{{ item.close|number }}</div>
+            </div>
+            <div class="delta {{ 'positive' if item.change_pct > 0 else 'negative' if item.change_pct < 0 else 'neutral' }}">
+              {{ item.change_pct|pct }}
+            </div>
+          </div>
+          <div class="chart">{{ item.chart|safe }}</div>
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <div class="container toolbar">
+    <nav class="segmented" aria-label="榜单导航">
+      <a href="#gainers">涨幅榜</a>
+      <a href="#losers">跌幅榜</a>
+    </nav>
+    <label>
+      <span class="hidden">筛选股票</span>
+      <input id="stock-search" class="search" type="search" placeholder="搜索代码、公司或概念" autocomplete="off">
+    </label>
+  </div>
+
+  {% for section_id, title, rows in [('gainers','涨幅前 ' ~ top_n, gainers), ('losers','跌幅前 ' ~ top_n, losers)] %}
+  <section class="section ranking" id="{{ section_id }}" aria-labelledby="{{ section_id }}-title">
+    <div class="container">
+      <h2 id="{{ section_id }}-title">{{ title }}</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>排名</th><th>代码</th><th>公司</th><th>收盘</th><th>涨跌</th><th>成交额</th><th>市值</th><th>P/E</th><th>换手率</th><th>概念</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+            <tr data-search="{{ (row.symbol ~ ' ' ~ row.name ~ ' ' ~ row.concepts|join(' '))|lower }}">
+              <td>{{ loop.index }}</td>
+              <td><a class="symbol" href="stocks/{{ row.file_name }}.html">{{ row.symbol }}</a></td>
+              <td class="company">{{ row.name }}</td>
+              <td>{{ row.close|number }}</td>
+              <td class="delta {{ 'positive' if row.change_pct > 0 else 'negative' }}">{{ row.change_pct|pct }}</td>
+              <td>{{ row.dollar_volume|money }}</td>
+              <td>{{ row.market_cap|money }}</td>
+              <td>{{ row.pe|ratio }}</td>
+              <td>{{ row.turnover_pct|pct_plain }}</td>
+              <td class="concepts">{{ row.concepts|join(' · ') if row.concepts else '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+  {% endfor %}
+
+  <section class="section">
+    <div class="container">
+      <div class="notice">
+        日度 FINRA 卖空成交量只覆盖向 FINRA 设施报告并公开传播的场外交易；它不等于空头持仓。Short interest 是未平仓空头仓位快照，通常每月公布两次。
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="container">数据仅用于研究，不构成投资建议。来源：Massive、FRED、SEC EDGAR、FINRA；字段缺失时显示“—”。</div>
+</footer>
+<script>
+(() => {
+  const input = document.getElementById('stock-search');
+  const rows = [...document.querySelectorAll('tbody tr[data-search]')];
+  input.addEventListener('input', () => {
+    const query = input.value.trim().toLowerCase();
+    rows.forEach(row => row.classList.toggle('hidden', query && !row.dataset.search.includes(query)));
+  });
+})();
+</script>
+</body>
+</html>
