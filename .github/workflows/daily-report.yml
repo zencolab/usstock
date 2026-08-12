@@ -30,7 +30,6 @@ on:
 
 permissions:
   contents: write
-  actions: write
 
 concurrency:
   group: market-close-report
@@ -40,7 +39,7 @@ env:
   PYTHONUNBUFFERED: "1"
 
 jobs:
-  build:
+  build-and-publish:
     runs-on: ubuntu-latest
     timeout-minutes: 330
     steps:
@@ -95,17 +94,13 @@ jobs:
             output
           retention-days: 90
 
-      - name: Publish generated site to gh-pages
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Prepare GitHub Pages branch
         shell: bash
         run: |
-          PUBLISH_DIR="$(mktemp -d)"
-          mkdir -p "$PUBLISH_DIR/site" "$PUBLISH_DIR/.github/workflows"
-          cp -a site/. "$PUBLISH_DIR/site/"
-          touch "$PUBLISH_DIR/site/.nojekyll" "$PUBLISH_DIR/.nojekyll"
-          cp .github/workflows/pages-deploy.yml "$PUBLISH_DIR/.github/workflows/pages-deploy.yml"
-          cat > "$PUBLISH_DIR/index.html" <<'HTML'
+          mkdir -p publish/site
+          cp -a site/. publish/site/
+          touch publish/.nojekyll publish/site/.nojekyll
+          cat > publish/index.html <<'HTML'
           <!doctype html>
           <html lang="zh-CN">
           <head>
@@ -118,26 +113,12 @@ jobs:
           <body><p>正在打开<a href="site/index.html">美股收盘日报</a>…</p></body>
           </html>
           HTML
-          cd "$PUBLISH_DIR"
-          git init
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b gh-pages
-          git add .
-          git commit -m "Deploy report from ${GITHUB_SHA}"
-          git remote add origin "{{https://github.com/${GITHUB_REPOSITORY}}}.git"
-          gh auth setup-git
-          git push --force origin gh-pages
 
-      - name: Dispatch Pages deployment
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          for attempt in 1 2 3 4 5; do
-            if gh workflow run pages-deploy.yml --ref gh-pages; then
-              exit 0
-            fi
-            sleep 5
-          done
-          exit 1
+      - name: Publish GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./publish
+          force_orphan: true
+          enable_jekyll: false
