@@ -9,8 +9,10 @@ _source = _source[: -len(_entrypoint)]
 exec(compile(_source, str(Path(__file__).with_name("market_report_source.py")), "exec"), globals(), globals())
 
 from hybrid_runtime import install as _install_hybrid_runtime
+from bilingual_runtime import install as _install_bilingual_runtime
 
 _install_hybrid_runtime(globals())
+_install_bilingual_runtime(globals())
 
 if __name__ == "__main__":
     raise SystemExit(main())
