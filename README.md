@@ -2,95 +2,62 @@
 
 每天美股常规交易结束后自动生成静态报告，也可在 GitHub **Actions → Run workflow** 手动运行或补跑指定交易日。
 
-## 报告内容
+本版本采用批量混合数据管线，不使用 IBKR、TWS 或 IB Gateway，也不再通过 Massive 逐只查询 200 只股票。
 
-- 纳斯达克综合指数、道琼斯工业指数、标普 500：当日行情和近 6 个月走势。
-- 全市场按收盘价相对前收盘价排序：涨幅前 100、跌幅前 100。
-- 每只入选股票的近半年价格图、P/E、市值、业务简介、概念标签、最新年报收入、股东/内部人申报摘要、估算换手率。
-- FINRA 日度场外卖空成交量图。
-- 空头持仓（short interest）图；该数据按监管发布节奏通常每月两次，并不是日度数据。
-- CSV/JSON 原始结果随每次 Actions 运行保留 90 天，最新网页发布到 GitHub Pages。
+## 快速数据管线
 
-## 数据源
-
-| 数据 | 默认来源 | 说明 |
+| 数据 | 来源 | 请求方式 |
 |---|---|---|
-| 全市场日线、个股半年线、公司简介、市值、空头持仓 | Massive（原 Polygon.io） | 需要 API Key；Basic 可运行但 5 次/分钟会较慢，Starter 及以上更适合每日生产 |
-| 三大指数 | FRED CSV | `NASDAQCOM`、`DJIA`、`SP500`，无需 Key |
-| 收入、EPS、股份数、股权及内部人申报 | SEC EDGAR | 官方公开数据；需设置可识别的 User-Agent |
-| 日度卖空成交量 | FINRA Consolidated NMS 文件 | 只覆盖向 FINRA 设施报告的场外交易，不等于全市场空头仓位 |
-| 所属概念 | 本仓库 `config/concepts.json` | 基于行业和业务描述的可审计关键词分类，并非交易所官方分类 |
+| 全市场当日和前一交易日日线 | Massive | 仅 2 次 grouped-daily 请求，用于完整涨跌榜 |
+| 200 只入选股票的半年日线 | Alpaca | 每批最多 75 只并自动分页，不再逐只请求 |
+| 空头持仓 | Massive | `ticker.any_of` 一次批量查询；不可用时明确显示缺失 |
+| 三大指数 | FRED | `NASDAQCOM`、`DJIA`、`SP500` |
+| 公司名称、收入、EPS、股份数、行业及申报 | SEC EDGAR | 官方 ticker/CIK 映射，默认限制 5 次/秒 |
+| 日度卖空成交量 | FINRA | 每个交易日一个全市场文件并缓存 |
 
-## 重要口径
+正常情况下，Massive 免费层每次报告只需约 3 次请求；主要价格历史由 Alpaca 批量接口完成。第一次运行预计约 10～30 分钟，缓存建立后约 5～15 分钟。
 
-1. **涨跌幅**：当日复权收盘价 / 上一交易日复权收盘价 - 1。
-2. 默认过滤普通格式代码、股价低于 1 美元或日成交额低于 100 万美元的低流动性证券；阈值可在命令行修改。
-3. **换手率**：当日成交量 / SEC 最新披露股份数。若拿不到流通股数，报告会明确标为估算值。
-4. **P/E**：收盘价 / SEC 最新正的年度摊薄每股收益；亏损或数据缺失显示 `—`。
-5. **卖空成交量**与**空头持仓**是两个不同概念。FINRA 日度文件是成交量；short interest 是未平仓空头仓位快照，通常每月发布两次。
-6. “股东情况”默认展示最近 13D/13G 受益所有权申报和 Form 4 内部人交易摘要；完整前十大机构股东需要额外的机构持仓数据授权。
+## Repository secrets
 
-## 部署和运行
+在 **Settings → Secrets and variables → Actions → Repository secrets** 添加：
 
-仓库推送到 `main` 后会自动完成首次构建。工作流同时支持：
+- `MASSIVE_API_KEY`
+- `ALPACA_API_KEY_ID`
+- `ALPACA_API_SECRET_KEY`
+- `SEC_USER_AGENT`，例如 `USMarketCloseReport/2.0 you@example.com`
+- 可选 `MASSIVE_RPM`，免费层填 `5`
+
+可选 Repository variables：
+
+- `ALPACA_FEED`：默认 `sip`；若账户没有延迟 SIP 历史权限可改为 `iex`，但 IEX 口径不等同全市场综合行情。
+- `SEC_RPS`：默认 `5`。
+
+工作流在 live 模式缺少凭据时会失败并保留上一份报告，不再静默发布 `UP001`、`DN001` 或“演示公司”。Demo 只能在手动运行时显式选择。
+
+## 运行和输出
 
 - 工作日美东时间 18:30 自动运行；
-- **Actions → US market close report → Run workflow** 手动运行；
-- 手动指定交易日、`live`/`demo` 模式和涨跌榜数量；
-- 未配置 `MASSIVE_API_KEY` 时安全回退到 `demo`，保证首次页面可部署；
-- 每次运行保留网页与 CSV/JSON 结果 90 天。
-
-真实行情需要在 **Settings → Secrets and variables → Actions** 配置：
-
-- `MASSIVE_API_KEY`：Massive API Key；
-- `SEC_USER_AGENT`：例如 `USMarketCloseReport/1.0 you@example.com`；
-- 可选 `MASSIVE_RPM`：API 套餐允许的每分钟请求数，Basic 填 `5`。
-
-计划任务使用 `America/New_York` 时区，因此自动跟随夏令时，并为数据供应商留出收盘后缓冲。交易日判断使用 NYSE 日历；节假日不会把自然日误当成交易日。
-
-## 本地运行
+- 支持手动选择交易日、`live`/`demo` 和榜单数量；
+- live 发布前会校验模式、股票页数量、数据源及演示占位符；
+- Actions artifact 保留网页及 CSV/JSON 90 天；
+- GitHub Pages 发布最新报告。
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-# 无 Key 的演示报告
-python market_report.py --mode demo --top-n 10 --output site --data-output output
-
-# 真实数据
 export MASSIVE_API_KEY="..."
-export SEC_USER_AGENT="USMarketCloseReport/1.0 you@example.com"
-export MASSIVE_RPM=5
+export ALPACA_API_KEY_ID="..."
+export ALPACA_API_SECRET_KEY="..."
+export ALPACA_FEED=sip
+export SEC_USER_AGENT="USMarketCloseReport/2.0 you@example.com"
 python market_report.py --mode live --top-n 100 --output site --data-output output
+python scripts/validate_output.py site --expected-min 100 --expected-mode live
 ```
 
-指定历史交易日：
+输出包含 `indices.csv`、`gainers.csv`、`losers.csv`、`stock_details.json`、`finra_short_volume.csv` 和 `short_interest.csv`。
 
-```bash
-python market_report.py --mode live --date 2026-08-10 --top-n 100
-```
+## 口径和授权
 
-## 输出结构
-
-```text
-site/
-  index.html
-  stocks/AAPL.html
-  assets/style.css
-  metadata.json
-output/
-  YYYY-MM-DD/
-    indices.csv
-    gainers.csv
-    losers.csv
-    stock_details.json
-    finra_short_volume.csv
-    short_interest.csv
-```
-
-## 免费层可行性
-
-代码可以使用 Massive Basic，但 200 只股票的半年行情、公司信息及空头数据会触发大量请求，运行时间可能超过 1 小时。正式每日生产建议至少使用无 5 次/分钟限制的股票数据套餐。SEC、FRED、FINRA 部分保持免费。
-
-Yahoo Finance / `yfinance` 没有被用作生产默认源，因为它不是稳定、正式授权的公开 API。
+- 涨跌幅使用 Massive 当日复权收盘价与前一交易日复权收盘价。
+- P/E、市值和换手率由行情与 SEC 披露数据估算。
+- SEC 没有详细业务简介时显示 SEC 行业分类，不生成虚构说明。
+- FINRA卖空成交量不等于空头持仓。
+- 免费 API 不自动授予公开再分发权；长期公开展示前请确认相关套餐许可。

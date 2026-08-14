@@ -2,7 +2,6 @@ name: US market close report
 
 on:
   schedule:
-    # Runs after the regular US close and follows daylight-saving time.
     - cron: "30 18 * * 1-5"
       timezone: "America/New_York"
   workflow_dispatch:
@@ -16,9 +15,7 @@ on:
         required: true
         default: "live"
         type: choice
-        options:
-          - live
-          - demo
+        options: [live, demo]
       top_n:
         description: "Number of gainers and losers"
         required: true
@@ -41,36 +38,24 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Compile and run offline smoke test
-        shell: bash
         run: |
-          python -m py_compile market_report.py hybrid_data.py scripts/validate_output.py
-          python market_report.py \
-            --mode demo \
-            --date 2026-08-10 \
-            --top-n 2 \
-            --output site-smoke \
-            --data-output output-smoke
+          python -m py_compile market_report.py hybrid_data.py hybrid_runtime.py scripts/validate_output.py
+          python market_report.py --mode demo --date 2026-08-10 --top-n 2 --output site-smoke --data-output output-smoke
           python scripts/validate_output.py site-smoke --expected-min 2 --expected-mode demo
           rm -rf site-smoke output-smoke
-
       - name: Restore API cache
         uses: actions/cache@v4
         with:
           path: .cache
           key: market-cache-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: |
-            market-cache-${{ runner.os }}-
-
+          restore-keys: market-cache-${{ runner.os }}-
       - name: Generate report
         env:
           MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
@@ -93,20 +78,14 @@ jobs:
             [[ -z "${SEC_USER_AGENT:-}" ]] && missing+=(SEC_USER_AGENT)
             if (( ${#missing[@]} > 0 )); then
               echo "::error::Missing live-mode Repository secrets: ${missing[*]}"
-              echo "The previous published report is preserved; demo data will not replace it."
+              echo "The previous report is preserved; demo data will not replace it."
               exit 1
             fi
           fi
           DATE_ARG=()
           if [[ -n "$TRADE_DATE" ]]; then DATE_ARG=(--date "$TRADE_DATE"); fi
-          python market_report.py \
-            --mode "$MODE" \
-            --top-n "$TOP_N" \
-            --output site \
-            --data-output output \
-            "${DATE_ARG[@]}"
+          python market_report.py --mode "$MODE" --top-n "$TOP_N" --output site --data-output output "${DATE_ARG[@]}"
           python scripts/validate_output.py site --expected-min "$TOP_N" --expected-mode "$MODE"
-
       - name: Upload dated data and report
         uses: actions/upload-artifact@v4
         with:
@@ -115,27 +94,14 @@ jobs:
             site
             output
           retention-days: 90
-
       - name: Prepare GitHub Pages branch
-        shell: bash
         run: |
           mkdir -p publish/site
           cp -a site/. publish/site/
           touch publish/.nojekyll publish/site/.nojekyll
           cat > publish/index.html <<'HTML'
-          <!doctype html>
-          <html lang="zh-CN">
-          <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width,initial-scale=1">
-          <meta http-equiv="refresh" content="0; url=site/index.html">
-          <title>美股收盘日报</title>
-          <script>location.replace('site/index.html');</script>
-          </head>
-          <body><p>正在打开<a href="site/index.html">美股收盘日报</a>…</p></body>
-          </html>
+          <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="0; url=site/index.html"><title>美股收盘日报</title><script>location.replace('site/index.html');</script></head><body><p>正在打开<a href="site/index.html">美股收盘日报</a>…</p></body></html>
           HTML
-
       - name: Publish GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
