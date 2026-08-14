@@ -54,6 +54,19 @@ def main() -> int:
         sources = metadata.get("sources") or []
         if not any("Alpaca" in str(source) for source in sources):
             raise SystemExit("live metadata does not identify the Alpaca batch source")
+        if not any("news" in str(source).lower() for source in sources):
+            raise SystemExit("live metadata does not identify the historical news source")
+        if not any("translation" in str(source).lower() for source in sources):
+            raise SystemExit("live metadata does not identify the translation source")
+        if "行业（中文）" not in live_markup or "行业（英文）" not in live_markup:
+            raise SystemExit("stock pages do not contain bilingual industry labels")
+        if "近三个月重要新闻" not in live_markup:
+            raise SystemExit("stock pages do not contain the three-month news section")
+        translated_blocks = re.findall(r'class="news-translation">([^<]+)', live_markup)
+        if not translated_blocks:
+            raise SystemExit("live report did not render any bilingual news paragraphs")
+        if not any("翻译暂不可用" not in block for block in translated_blocks):
+            raise SystemExit("all news translations are unavailable")
 
     print(
         f"validated report_date={metadata.get('report_date')} "
