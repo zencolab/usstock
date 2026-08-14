@@ -86,7 +86,26 @@ jobs:
           fi
           DATE_ARG=()
           if [[ -n "$TRADE_DATE" ]]; then DATE_ARG=(--date "$TRADE_DATE"); fi
-          python market_report.py --mode "$MODE" --top-n "$TOP_N" --output site --data-output output "${DATE_ARG[@]}"
+          set +e
+          python market_report.py --mode "$MODE" --top-n "$TOP_N" --output site --data-output output "${DATE_ARG[@]}" 2>&1 | tee /tmp/market-report.log
+          REPORT_STATUS=${PIPESTATUS[0]}
+          set -e
+          if [[ "$REPORT_STATUS" -ne 0 ]]; then
+            python - <<'PY'
+          import os
+          from pathlib import Path
+          text = Path("/tmp/market-report.log").read_text(encoding="utf-8", errors="replace")
+          for name in ("MASSIVE_API_KEY", "ALPACA_API_KEY_ID", "ALPACA_API_SECRET_KEY", "SEC_USER_AGENT"):
+              secret = os.getenv(name, "")
+              if secret:
+                  text = text.replace(secret, "***")
+          lines = [line.strip() for line in text.splitlines() if line.strip()]
+          message = " | ".join(lines[-8:])[-3800:] or "Unknown live report error"
+          message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=Live report failed::{message}")
+          PY
+            exit "$REPORT_STATUS"
+          fi
           python scripts/validate_output.py site --expected-min "$TOP_N" --expected-mode "$MODE"
       - name: Upload dated data and report
         uses: actions/upload-artifact@v4
