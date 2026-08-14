@@ -29,7 +29,7 @@
 
 可选 Repository variables：
 
-- `ALPACA_FEED`：默认 `sip`；若账户没有延迟 SIP 历史权限可改为 `iex`，但 IEX 口径不等同全市场综合行情。
+- `ALPACA_FEED`：默认 `iex`，适用于Alpaca免费账户；只有账户具备SIP历史数据权限时才设为 `sip`。IEX口径不等同全市场综合行情。
 - `SEC_RPS`：默认 `5`。
 
 工作流在 live 模式缺少凭据时会失败并保留上一份报告，不再静默发布 `UP001`、`DN001` 或“演示公司”。Demo 只能在手动运行时显式选择。
@@ -46,7 +46,7 @@
 export MASSIVE_API_KEY="..."
 export ALPACA_API_KEY_ID="..."
 export ALPACA_API_SECRET_KEY="..."
-export ALPACA_FEED=sip
+export ALPACA_FEED=iex
 export SEC_USER_AGENT="USMarketCloseReport/2.0 you@example.com"
 python market_report.py --mode live --top-n 100 --output site --data-output output
 python scripts/validate_output.py site --expected-min 100 --expected-mode live
@@ -60,4 +60,5 @@ python scripts/validate_output.py site --expected-min 100 --expected-mode live
 - P/E、市值和换手率由行情与 SEC 披露数据估算。
 - SEC 没有详细业务简介时显示 SEC 行业分类，不生成虚构说明。
 - FINRA卖空成交量不等于空头持仓。
+- 免费Alpaca账户默认使用IEX半年历史行情；排行仍由Massive全市场日线计算。
 - 免费 API 不自动授予公开再分发权；长期公开展示前请确认相关套餐许可。
