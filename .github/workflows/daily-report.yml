@@ -1,6 +1,8 @@
 name: US market close report
 
 on:
+  push:
+    branches: [main]
   schedule:
     - cron: "30 18 * * 1-5"
       timezone: "America/New_York"
