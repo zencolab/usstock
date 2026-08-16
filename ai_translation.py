@@ -22,19 +22,19 @@ Translate each English industry label into a short, standard Simplified-Chinese 
 Return only one JSON object in this exact shape: {"translations":["..."]}. The array must have exactly the same number of items and the same order as the input array."""
 
 
-def _session(headers: dict[str, str] | None = None) -> requests.Session:
+def _session() -> requests.Session:
     client = requests.Session()
     retry = Retry(
         total=5,
         backoff_factor=1.2,
-        status_forcelist=(408, 429, 500, 502, 503, 504),
+        # 429 is handled by OllamaBackend so a configured fallback token can be tried.
+        status_forcelist=(408, 500, 502, 503, 504),
         allowed_methods=("POST",),
         respect_retry_after_header=True,
     )
     client.mount("https://", HTTPAdapter(max_retries=retry))
     client.mount("http://", HTTPAdapter(max_retries=retry))
-    if headers:
-        client.headers.update(headers)
+    client.headers.update({"Content-Type": "application/json"})
     return client
 
 
@@ -95,55 +95,52 @@ class CallableBackend(TranslationBackend):
         return [str(self.function(text)).strip() for text in texts]
 
 
-class GeminiBackend(TranslationBackend):
-    provider = "Google Gemini"
-
-    def __init__(self, api_key: str, model: str, requests_per_minute: float) -> None:
-        if not api_key:
-            raise RuntimeError("TRANSLATION_PROVIDER=gemini requires the GEMINI_API_KEY Repository secret")
-        self.model = model
-        self.gate = _Gate(requests_per_minute)
-        self.client = _session({"x-goog-api-key": api_key, "Content-Type": "application/json"})
-        self.url = "https://" + f"generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-
-    def translate_many(self, texts: list[str], *, industry: bool = False) -> list[str]:
-        if not texts:
-            return []
-        prompt = INDUSTRY_PROMPT if industry else SYSTEM_PROMPT
-        body = {
-            "systemInstruction": {"parts": [{"text": prompt}]},
-            "contents": [{"role": "user", "parts": [{"text": json.dumps({"source_language": "English", "target_language": "Simplified Chinese", "texts": texts}, ensure_ascii=False)}]}],
-            "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"},
-        }
-        self.gate.wait()
-        response = self.client.post(self.url, json=body, timeout=180)
-        if response.status_code in {400, 401, 403, 404}:
-            message = response.text[:500].replace("\n", " ")
-            raise RuntimeError(f"Gemini translation request rejected ({response.status_code}): {message}")
-        response.raise_for_status()
-        payload = response.json()
-        try:
-            parts = payload["candidates"][0]["content"]["parts"]
-            text = "".join(str(part.get("text") or "") for part in parts)
-        except (KeyError, IndexError, TypeError) as exc:
-            raise RuntimeError("Gemini translation response did not contain text") from exc
-        return _decode_json(text, len(texts))
-
-
 class OllamaBackend(TranslationBackend):
     provider = "Ollama"
 
-    def __init__(self, base_url: str, api_key: str, model: str, requests_per_minute: float) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        requests_per_minute: float,
+        *,
+        fallback_api_keys: list[str] | None = None,
+    ) -> None:
         self.model = model
-        root = (base_url or "http://localhost:11434").rstrip("/")
+        root = (base_url or "https://ollama.com/api").rstrip("/")
         if not root.endswith("/api"):
             root += "/api"
-        headers = {"Content-Type": "application/json"}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        self.client = _session(headers)
+        self.client = _session()
         self.url = f"{root}/chat"
         self.gate = _Gate(requests_per_minute)
+        keys = [api_key, *(fallback_api_keys or [])]
+        self.api_keys = list(dict.fromkeys(key.strip() for key in keys if key and key.strip()))
+        self._active_key = 0
+
+    def _post(self, body: dict[str, Any]) -> requests.Response:
+        attempts = max(1, len(self.api_keys))
+        last_response: requests.Response | None = None
+        for offset in range(attempts):
+            key_index = (self._active_key + offset) % attempts if self.api_keys else 0
+            headers: dict[str, str] = {}
+            if self.api_keys:
+                headers["Authorization"] = f"Bearer {self.api_keys[key_index]}"
+            self.gate.wait()
+            response = self.client.post(self.url, json=body, headers=headers, timeout=600)
+            last_response = response
+            if response.status_code in {401, 402, 403, 429} and offset + 1 < attempts:
+                print(
+                    "warning: Ollama credential unavailable or quota-limited; "
+                    "trying the configured fallback credential"
+                )
+                continue
+            if self.api_keys:
+                self._active_key = key_index
+            return response
+        if last_response is None:
+            raise RuntimeError("Ollama request did not produce a response")
+        return last_response
 
     def translate_many(self, texts: list[str], *, industry: bool = False) -> list[str]:
         if not texts:
@@ -153,76 +150,59 @@ class OllamaBackend(TranslationBackend):
             "model": self.model,
             "messages": [
                 {"role": "system", "content": prompt},
-                {"role": "user", "content": json.dumps({"source_language": "English", "target_language": "Simplified Chinese", "texts": texts}, ensure_ascii=False)},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "source_language": "English",
+                            "target_language": "Simplified Chinese",
+                            "texts": texts,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
             ],
             "stream": False,
             "format": "json",
             "options": {"temperature": 0.1},
         }
-        self.gate.wait()
-        response = self.client.post(self.url, json=body, timeout=600)
-        if response.status_code in {400, 401, 403, 404}:
+        response = self._post(body)
+        if response.status_code in {400, 401, 402, 403, 404, 429}:
             message = response.text[:500].replace("\n", " ")
-            raise RuntimeError(f"Ollama translation request rejected ({response.status_code}): {message}")
+            raise RuntimeError(
+                f"Ollama translation request rejected ({response.status_code}): {message}"
+            )
         response.raise_for_status()
         payload = response.json()
-        text = str((payload.get("message") or {}).get("content") or payload.get("response") or "")
+        text = str(
+            (payload.get("message") or {}).get("content")
+            or payload.get("response")
+            or ""
+        )
         if not text:
             raise RuntimeError("Ollama translation response did not contain text")
         return _decode_json(text, len(texts))
 
 
-class ArgosBackend(TranslationBackend):
-    provider = "Argos"
-    model = "en-zh-local-neural"
-
-    def __init__(self) -> None:
-        self._model: Any = None
-
-    def _load_model(self) -> Any:
-        if self._model is not None:
-            return self._model
-        import argostranslate.package as argos_package
-        import argostranslate.translate as argos_translate
-
-        def find_model() -> Any:
-            languages = argos_translate.get_installed_languages()
-            source = next((language for language in languages if language.code == "en"), None)
-            target = next((language for language in languages if language.code == "zh"), None)
-            return source.get_translation(target) if source and target else None
-
-        model = find_model()
-        if model is None:
-            print("Downloading the Argos English-to-Chinese neural translation model …")
-            argos_package.update_package_index()
-            package = next(candidate for candidate in argos_package.get_available_packages() if candidate.from_code == "en" and candidate.to_code == "zh")
-            argos_package.install_from_path(package.download())
-            model = find_model()
-        if model is None:
-            raise RuntimeError("Argos en→zh model was not found after installation")
-        self._model = model
-        return model
-
-    def translate_many(self, texts: list[str], *, industry: bool = False) -> list[str]:
-        model = self._load_model()
-        return [str(model.translate(text) or "").strip() for text in texts]
-
-
-def build_translation_backend(*, translate_fn: Callable[[str], str] | None = None) -> TranslationBackend:
+def build_translation_backend(
+    *, translate_fn: Callable[[str], str] | None = None
+) -> TranslationBackend:
     if translate_fn is not None:
         return CallableBackend(translate_fn)
 
-    requested = os.getenv("TRANSLATION_PROVIDER", "auto").strip().lower() or "auto"
-    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
-    ollama_base_url = os.getenv("OLLAMA_BASE_URL", "").strip()
-    ollama_key = os.getenv("OLLAMA_API_KEY", "").strip()
-
-    if requested == "auto":
-        requested = "gemini" if gemini_key else ("ollama" if ollama_base_url else "argos")
-    if requested == "gemini":
-        return GeminiBackend(gemini_key, os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip() or "gemini-3.6-flash", float(os.getenv("GEMINI_RPM", "10")))
-    if requested == "ollama":
-        return OllamaBackend(ollama_base_url, ollama_key, os.getenv("OLLAMA_MODEL", "gemma4").strip() or "gemma4", float(os.getenv("OLLAMA_RPM", "20")))
-    if requested == "argos":
-        return ArgosBackend()
-    raise RuntimeError("TRANSLATION_PROVIDER must be auto, gemini, ollama, or argos")
+    requested = os.getenv("TRANSLATION_PROVIDER", "ollama").strip().lower() or "ollama"
+    if requested not in {"auto", "ollama"}:
+        raise RuntimeError("This deployment supports TRANSLATION_PROVIDER=ollama only")
+    fallback_raw = os.getenv("OLLAMA_API_KEY_FALLBACK", "")
+    fallback_keys = [
+        value.strip()
+        for value in re.split(r"[,;\n]+", fallback_raw)
+        if value.strip()
+    ]
+    return OllamaBackend(
+        os.getenv("OLLAMA_BASE_URL", "https://ollama.com/api").strip(),
+        os.getenv("OLLAMA_API_KEY", "").strip(),
+        os.getenv("OLLAMA_MODEL", "gemma4:cloud").strip() or "gemma4:cloud",
+        float(os.getenv("OLLAMA_RPM", "20")),
+        fallback_api_keys=fallback_keys,
+    )
