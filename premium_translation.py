@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -11,7 +12,6 @@ from news_translation import (
     _plain_text,
     _published_datetime,
     _summary_paragraphs,
-    select_important_news,
 )
 
 
@@ -30,7 +30,11 @@ class CachedAiTranslator:
         self.cache_file = self.cache_dir / f"{self.backend.cache_namespace}-en-zh.json"
         self._dirty = 0
         try:
-            loaded = json.loads(self.cache_file.read_text(encoding="utf-8")) if self.cache_file.exists() else {}
+            loaded = (
+                json.loads(self.cache_file.read_text(encoding="utf-8"))
+                if self.cache_file.exists()
+                else {}
+            )
             self.cache: dict[str, dict[str, str]] = loaded if isinstance(loaded, dict) else {}
         except Exception:
             self.cache = {}
@@ -59,7 +63,11 @@ class CachedAiTranslator:
                     continue
             key = self._key(source, industry)
             cached = self.cache.get(key)
-            if isinstance(cached, dict) and cached.get("source") == source and cached.get("translation"):
+            if (
+                isinstance(cached, dict)
+                and cached.get("source") == source
+                and cached.get("translation")
+            ):
                 translations[source] = cached["translation"]
             elif source not in missing:
                 missing.append(source)
@@ -96,19 +104,31 @@ class CachedAiTranslator:
         self._dirty = 0
 
 
+def _detail_file(symbol: str, item: dict[str, Any], headline: str) -> str:
+    published = _published_datetime(item)
+    day = published.date().isoformat() if published else "undated"
+    identity = str(item.get("url") or item.get("id") or f"{day}|{headline}")
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+    safe_symbol = re.sub(r"[^A-Z0-9.-]+", "-", symbol.upper()).strip("-") or "STOCK"
+    return f"{safe_symbol}-{day}-{digest}.html"
+
+
 def bilingual_news(
     rows: Iterable[dict[str, Any]],
-    report_date: Any,
     translator: CachedAiTranslator,
     *,
-    limit: int = 5,
+    symbol: str,
 ) -> list[dict[str, Any]]:
+    """Translate every catalog headline and available summary paragraph."""
     result: list[dict[str, Any]] = []
-    for item in select_important_news(rows, report_date, limit=limit):
+    for item in rows:
         headline_en = _plain_text(item.get("headline"))
+        if not headline_en:
+            continue
         published = _published_datetime(item)
         paragraph_sources = _summary_paragraphs(item)
         translated = translator.translate_many([headline_en, *paragraph_sources])
+        detail_file = _detail_file(symbol, item, headline_en)
         paragraphs = [
             {"en": paragraph, "zh": target}
             for paragraph, target in zip(paragraph_sources, translated[1:])
@@ -118,26 +138,27 @@ def bilingual_news(
                 "headline_en": headline_en,
                 "headline_zh": translated[0],
                 "published_at": published.date().isoformat() if published else "",
+                "published_iso": published.isoformat() if published else "",
                 "source": str(item.get("source") or "Benzinga via Alpaca"),
                 "author": str(item.get("author") or ""),
                 "url": str(item.get("url") or ""),
+                "detail_file": detail_file,
+                "detail_url": f"../news/{detail_file}",
                 "paragraphs": paragraphs,
             }
         )
+    result.sort(key=lambda item: item.get("published_iso") or "", reverse=True)
     return result
 
 
 def collect_news_sources(
     news_by_symbol: dict[str, Iterable[dict[str, Any]]],
-    report_date: Any,
-    *,
-    limit: int = 5,
 ) -> list[str]:
-    """Collect unique source strings so cloud translation can be fully batched."""
+    """Collect every unique title and summary so cloud translation is batched."""
     sources: list[str] = []
     seen: set[str] = set()
     for rows in news_by_symbol.values():
-        for item in select_important_news(rows, report_date, limit=limit):
+        for item in rows:
             values = [_plain_text(item.get("headline")), *_summary_paragraphs(item)]
             for value in values:
                 if value and value not in seen:

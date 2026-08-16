@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import hashlib
+import calendar
 import html
 import json
 import re
@@ -9,16 +9,17 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Iterable
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 ALPACA_NEWS_URL = "https://data.alpaca.markets/v1beta1/news"
+NEWS_CACHE_VERSION = 2
 
-# High-confidence translations for frequent SEC SIC labels. Unknown labels fall
-# back to the local neural translator.
+# High-confidence translations for frequent SEC SIC labels. Unknown labels are
+# translated by the configured AI backend.
 INDUSTRY_OVERRIDES = {
     "computer communications equipment": "计算机通信设备",
     "insurance agents, brokers & service": "保险代理、经纪及相关服务",
@@ -39,50 +40,21 @@ INDUSTRY_OVERRIDES = {
     "hospital & medical service plans": "医院及医疗服务计划",
 }
 
-IMPORTANT_TERMS: tuple[tuple[str, float], ...] = (
-    ("bankruptcy", 12),
-    ("chapter 11", 12),
-    ("fda approval", 11),
-    ("fda", 8),
-    ("clinical trial", 8),
-    ("phase 3", 9),
-    ("phase iii", 9),
-    ("merger", 10),
-    ("acquisition", 9),
-    ("acquire", 8),
-    ("strategic review", 7),
-    ("earnings", 8),
-    ("quarterly results", 8),
-    ("financial results", 8),
-    ("revenue", 5),
-    ("guidance", 7),
-    ("outlook", 5),
-    ("profit warning", 9),
-    ("restatement", 10),
-    ("sec investigation", 10),
-    ("investigation", 6),
-    ("lawsuit", 6),
-    ("settlement", 5),
-    ("public offering", 8),
-    ("registered direct", 8),
-    ("private placement", 7),
-    ("stock offering", 8),
-    ("debt offering", 6),
-    ("buyback", 6),
-    ("share repurchase", 6),
-    ("dividend", 5),
-    ("contract", 5),
-    ("partnership", 4),
-    ("ceo", 4),
-    ("chief executive", 4),
-    ("resigns", 6),
-    ("delisting", 9),
-    ("nasdaq compliance", 7),
-    ("patent", 4),
-    ("data breach", 9),
-    ("cyberattack", 9),
-    ("recall", 8),
-)
+
+def calendar_months_before(value: date, months: int) -> date:
+    """Subtract calendar months, clamping the day at the target month end."""
+    if months < 0:
+        raise ValueError("months must be non-negative")
+    month_index = value.year * 12 + value.month - 1 - months
+    year, zero_based_month = divmod(month_index, 12)
+    month = zero_based_month + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def news_window(report_date: date) -> tuple[date, date]:
+    """Return the inclusive three-calendar-month news window."""
+    return calendar_months_before(report_date, 3), report_date
 
 
 def _session(headers: dict[str, str]) -> requests.Session:
@@ -115,7 +87,7 @@ class _RequestGate:
 
 
 class AlpacaNewsClient:
-    """Fetch and cache up to 50 news records per selected symbol."""
+    """Fetch every Alpaca/Benzinga news page for each selected symbol."""
 
     def __init__(
         self,
@@ -125,17 +97,21 @@ class AlpacaNewsClient:
         *,
         requests_per_minute: float = 180,
         workers: int = 8,
+        max_pages: int = 100,
+        strict: bool = True,
     ) -> None:
         self.cache_dir = cache_dir / "news"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.workers = max(1, min(workers, 12))
+        self.max_pages = max(1, max_pages)
+        self.strict = strict
         self.gate = _RequestGate(requests_per_minute)
         self.local = threading.local()
         self.headers = {
             "APCA-API-KEY-ID": key_id,
             "APCA-API-SECRET-KEY": secret_key,
             "Accept": "application/json",
-            "User-Agent": "USMarketCloseReport/3.0",
+            "User-Agent": "USMarketCloseReport/4.0",
         }
 
     def _client(self) -> requests.Session:
@@ -150,42 +126,95 @@ class AlpacaNewsClient:
         day_dir.mkdir(parents=True, exist_ok=True)
         return day_dir / f"{symbol}.json"
 
+    @staticmethod
+    def _cached_rows(payload: Any, symbol: str, start: date, end: date) -> list[dict[str, Any]] | None:
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("version") != NEWS_CACHE_VERSION or payload.get("complete") is not True:
+            return None
+        if payload.get("symbol") != symbol or payload.get("start") != start.isoformat() or payload.get("end") != end.isoformat():
+            return None
+        rows = payload.get("rows")
+        if not isinstance(rows, list):
+            return None
+        return [row for row in rows if isinstance(row, dict)]
+
     def _fetch_one(self, symbol: str, start: date, end: date) -> list[dict[str, Any]]:
         cache_file = self._cache_file(symbol, end)
         if cache_file.exists():
             try:
-                cached = json.loads(cache_file.read_text(encoding="utf-8"))
-                if isinstance(cached, list):
-                    return [row for row in cached if isinstance(row, dict)]
+                cached = self._cached_rows(
+                    json.loads(cache_file.read_text(encoding="utf-8")), symbol, start, end
+                )
+                if cached is not None:
+                    return cached
             except Exception:
                 pass
 
-        self.gate.wait()
-        response = self._client().get(
-            ALPACA_NEWS_URL,
-            params={
-                "symbols": symbol,
-                "start": f"{start.isoformat()}T00:00:00Z",
-                "end": f"{(end + timedelta(days=1)).isoformat()}T00:00:00Z",
-                "sort": "desc",
-                "limit": 50,
-            },
-            timeout=60,
-        )
-        if response.status_code in {401, 403}:
-            raise RuntimeError("Alpaca news access was rejected; check the API credentials and market-data plan")
-        response.raise_for_status()
-        payload = response.json()
-        rows = payload.get("news") or []
-        if not isinstance(rows, list):
-            rows = []
-        normalized = [row for row in rows if isinstance(row, dict)]
-        cache_file.write_text(json.dumps(normalized, ensure_ascii=False), encoding="utf-8")
-        return normalized
+        base_params: dict[str, Any] = {
+            "symbols": symbol,
+            "start": f"{start.isoformat()}T00:00:00Z",
+            # Alpaca's end is exclusive; this includes the report date but no later date.
+            "end": f"{(end + timedelta(days=1)).isoformat()}T00:00:00Z",
+            "sort": "desc",
+            "limit": 50,
+        }
+        rows: list[dict[str, Any]] = []
+        page_token = ""
+        seen_tokens: set[str] = set()
+        page_count = 0
 
-    def news_for_symbols(self, symbols: Iterable[str], start: date, end: date) -> dict[str, list[dict[str, Any]]]:
+        while True:
+            if page_token:
+                if page_token in seen_tokens:
+                    raise RuntimeError(f"Alpaca repeated a news page token for {symbol}")
+                seen_tokens.add(page_token)
+            page_count += 1
+            if page_count > self.max_pages:
+                raise RuntimeError(
+                    f"Alpaca news for {symbol} exceeded the {self.max_pages}-page safety limit"
+                )
+            params = dict(base_params)
+            if page_token:
+                params["page_token"] = page_token
+            self.gate.wait()
+            response = self._client().get(ALPACA_NEWS_URL, params=params, timeout=60)
+            if response.status_code in {401, 403}:
+                raise RuntimeError(
+                    "Alpaca news access was rejected; check the API credentials and market-data plan"
+                )
+            response.raise_for_status()
+            payload = response.json()
+            page_rows = payload.get("news") or []
+            if not isinstance(page_rows, list):
+                page_rows = []
+            rows.extend(row for row in page_rows if isinstance(row, dict))
+            page_token = str(payload.get("next_page_token") or "").strip()
+            if not page_token:
+                break
+
+        cache_payload = {
+            "version": NEWS_CACHE_VERSION,
+            "symbol": symbol,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "complete": True,
+            "pages": page_count,
+            "rows": rows,
+        }
+        temporary = cache_file.with_suffix(".tmp")
+        temporary.write_text(json.dumps(cache_payload, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(cache_file)
+        if page_count > 1:
+            print(f"Alpaca news {symbol}: downloaded {len(rows)} records across {page_count} pages")
+        return rows
+
+    def news_for_symbols(
+        self, symbols: Iterable[str], start: date, end: date
+    ) -> dict[str, list[dict[str, Any]]]:
         wanted = list(dict.fromkeys(str(symbol).upper() for symbol in symbols if symbol))
         result: dict[str, list[dict[str, Any]]] = {symbol: [] for symbol in wanted}
+        errors: list[str] = []
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
             futures = {pool.submit(self._fetch_one, symbol, start, end): symbol for symbol in wanted}
             for future in as_completed(futures):
@@ -193,7 +222,11 @@ class AlpacaNewsClient:
                 try:
                     result[symbol] = future.result()
                 except Exception as exc:
-                    print(f"warning: Alpaca news unavailable for {symbol}: {exc}")
+                    message = f"Alpaca news unavailable for {symbol}: {exc}"
+                    print(f"warning: {message}")
+                    errors.append(message)
+        if errors and self.strict:
+            raise RuntimeError("; ".join(errors[:5]))
         return result
 
 
@@ -217,153 +250,42 @@ def _published_datetime(item: dict[str, Any]) -> datetime | None:
         return None
 
 
-def _importance_score(item: dict[str, Any], report_date: date) -> float:
-    headline = _plain_text(item.get("headline"))
-    summary = _plain_text(item.get("summary"))
-    text = f"{headline} {summary}".lower()
-    score = sum(weight for phrase, weight in IMPORTANT_TERMS if phrase in text)
-    published = _published_datetime(item)
-    if published:
-        age_days = max(0, (report_date - published.date()).days)
-        score += max(0.0, 3.0 - age_days / 30.0)
-    symbols = item.get("symbols") or []
-    if isinstance(symbols, list) and 0 < len(symbols) <= 3:
-        score += 1.0
-    if headline and len(headline) >= 30:
-        score += 0.5
-    return score
+def _symbols(item: dict[str, Any]) -> list[str]:
+    values = item.get("symbols") or []
+    if isinstance(values, str):
+        values = re.split(r"[,\s]+", values)
+    if not isinstance(values, list):
+        return []
+    return [str(value).upper().strip() for value in values if str(value).strip()]
 
 
-def select_important_news(
-    rows: Iterable[dict[str, Any]], report_date: date, *, limit: int = 5
+def prepare_news_catalog(
+    rows: Iterable[dict[str, Any]], symbol: str, report_date: date
 ) -> list[dict[str, Any]]:
-    ranked: list[tuple[float, datetime, dict[str, Any]]] = []
+    """Keep every unique in-window article associated with the requested symbol."""
+    start, end = news_window(report_date)
+    target = symbol.upper().strip()
+    result: list[tuple[datetime, dict[str, Any]]] = []
     seen: set[str] = set()
-    cutoff = report_date - timedelta(days=92)
     for row in rows:
-        headline = _plain_text(row.get("headline"))
-        url = str(row.get("url") or "")
-        key = url or headline.lower()
-        if not headline or not key or key in seen:
-            continue
         published = _published_datetime(row)
-        if published and not (cutoff <= published.date() <= report_date + timedelta(days=1)):
+        if published is None or not (start <= published.date() <= end):
             continue
-        event_text = f"{headline} {_plain_text(row.get('summary'))}".lower()
-        if not any(phrase in event_text for phrase, _ in IMPORTANT_TERMS):
+        headline = _plain_text(row.get("headline"))
+        if not headline:
             continue
-        score = _importance_score(row, report_date)
-        if score < 4.0:
+        tagged_symbols = _symbols(row)
+        if tagged_symbols and target not in tagged_symbols:
+            continue
+        url = str(row.get("url") or "").strip()
+        article_id = str(row.get("id") or "").strip()
+        key = url or article_id or f"{published.isoformat()}|{headline.lower()}"
+        if key in seen:
             continue
         seen.add(key)
-        ranked.append((score, published or datetime.min.replace(tzinfo=timezone.utc), row))
-    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    return [row for _, _, row in ranked[: max(1, limit)]]
-
-
-class CachedNeuralTranslator:
-    """Local en→zh neural translation with a persistent text cache.
-
-    Argos Translate and its model are imported/downloaded only in live mode.
-    A callable can be injected for deterministic unit tests.
-    """
-
-    def __init__(
-        self,
-        cache_dir: Path,
-        *,
-        translate_fn: Callable[[str], str] | None = None,
-    ) -> None:
-        self.cache_dir = cache_dir / "translation"
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.cache_file = self.cache_dir / "en-zh.json"
-        self._translate_fn = translate_fn
-        self._model: Any = None
-        self._model_error: str | None = None
-        self._dirty = 0
-        try:
-            loaded = json.loads(self.cache_file.read_text(encoding="utf-8")) if self.cache_file.exists() else {}
-            self.cache: dict[str, dict[str, str]] = loaded if isinstance(loaded, dict) else {}
-        except Exception:
-            self.cache = {}
-
-    @staticmethod
-    def _key(text: str) -> str:
-        return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-    def _load_model(self) -> Any:
-        if self._translate_fn is not None:
-            return self._translate_fn
-        if self._model is not None:
-            return self._model
-        if self._model_error is not None:
-            return None
-        try:
-            import argostranslate.package as argos_package
-            import argostranslate.translate as argos_translate
-
-            def find_model() -> Any:
-                languages = argos_translate.get_installed_languages()
-                source = next((language for language in languages if language.code == "en"), None)
-                target = next((language for language in languages if language.code == "zh"), None)
-                return source.get_translation(target) if source and target else None
-
-            model = find_model()
-            if model is None:
-                print("Downloading the Argos English-to-Chinese neural translation model …")
-                argos_package.update_package_index()
-                available = argos_package.get_available_packages()
-                package = next(
-                    candidate
-                    for candidate in available
-                    if candidate.from_code == "en" and candidate.to_code == "zh"
-                )
-                download_path = package.download()
-                argos_package.install_from_path(download_path)
-                model = find_model()
-            if model is None:
-                raise RuntimeError("Argos en→zh model was not found after installation")
-            self._model = model
-            return model
-        except Exception as exc:
-            self._model_error = str(exc)
-            print(f"warning: local neural translation unavailable: {exc}")
-            return None
-
-    def translate(self, text: Any, *, industry: bool = False) -> str:
-        source = _plain_text(text)
-        if not source:
-            return ""
-        if industry:
-            override = INDUSTRY_OVERRIDES.get(source.lower())
-            if override:
-                return override
-        key = self._key(source)
-        cached = self.cache.get(key)
-        if isinstance(cached, dict) and cached.get("source") == source and cached.get("translation"):
-            return cached["translation"]
-        model = self._load_model()
-        if model is None:
-            return "（自动翻译暂不可用）"
-        try:
-            translated = model(source) if callable(model) else model.translate(source)
-            translated = str(translated or "").strip() or "（自动翻译暂不可用）"
-        except Exception as exc:
-            print(f"warning: translation failed: {exc}")
-            return "（自动翻译暂不可用）"
-        self.cache[key] = {"source": source, "translation": translated}
-        self._dirty += 1
-        if self._dirty >= 25:
-            self.flush()
-        return translated
-
-    def flush(self) -> None:
-        if not self._dirty:
-            return
-        temp = self.cache_file.with_suffix(".tmp")
-        temp.write_text(json.dumps(self.cache, ensure_ascii=False, indent=2), encoding="utf-8")
-        temp.replace(self.cache_file)
-        self._dirty = 0
+        result.append((published, row))
+    result.sort(key=lambda pair: pair[0], reverse=True)
+    return [row for _, row in result]
 
 
 def _summary_paragraphs(item: dict[str, Any], *, max_paragraphs: int = 3) -> list[str]:
@@ -374,32 +296,3 @@ def _summary_paragraphs(item: dict[str, Any], *, max_paragraphs: int = 3) -> lis
         return []
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
     return paragraphs[:max_paragraphs] if paragraphs else [text]
-
-
-def bilingual_news(
-    rows: Iterable[dict[str, Any]],
-    report_date: date,
-    translator: CachedNeuralTranslator,
-    *,
-    limit: int = 5,
-) -> list[dict[str, Any]]:
-    result: list[dict[str, Any]] = []
-    for item in select_important_news(rows, report_date, limit=limit):
-        headline_en = _plain_text(item.get("headline"))
-        published = _published_datetime(item)
-        paragraphs = [
-            {"en": paragraph, "zh": translator.translate(paragraph)}
-            for paragraph in _summary_paragraphs(item)
-        ]
-        result.append(
-            {
-                "headline_en": headline_en,
-                "headline_zh": translator.translate(headline_en),
-                "published_at": published.date().isoformat() if published else "",
-                "source": str(item.get("source") or "Benzinga via Alpaca"),
-                "author": str(item.get("author") or ""),
-                "url": str(item.get("url") or ""),
-                "paragraphs": paragraphs,
-            }
-        )
-    return result
