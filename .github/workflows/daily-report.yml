@@ -21,6 +21,10 @@ on:
         required: true
         default: "100"
         type: string
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/daily-report.yml"
 
 permissions:
   contents: write
@@ -66,13 +70,10 @@ jobs:
           ALPACA_FEED: ${{ vars.ALPACA_FEED || 'iex' }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           SEC_RPS: ${{ vars.SEC_RPS || '5' }}
-          TRANSLATION_PROVIDER: ${{ vars.TRANSLATION_PROVIDER || 'auto' }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
-          GEMINI_RPM: ${{ vars.GEMINI_RPM || '10' }}
-          OLLAMA_BASE_URL: ${{ vars.OLLAMA_BASE_URL }}
+          TRANSLATION_PROVIDER: ollama
+          OLLAMA_BASE_URL: https://ollama.com/api
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
-          OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL || 'gemma4' }}
+          OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL || 'gemma4:cloud' }}
           OLLAMA_RPM: ${{ vars.OLLAMA_RPM || '20' }}
         shell: bash
         run: |
@@ -85,6 +86,7 @@ jobs:
             [[ -z "${ALPACA_API_KEY_ID:-}" ]] && missing+=(ALPACA_API_KEY_ID)
             [[ -z "${ALPACA_API_SECRET_KEY:-}" ]] && missing+=(ALPACA_API_SECRET_KEY)
             [[ -z "${SEC_USER_AGENT:-}" ]] && missing+=(SEC_USER_AGENT)
+            [[ -z "${OLLAMA_API_KEY:-}" ]] && missing+=(OLLAMA_API_KEY)
             if (( ${#missing[@]} > 0 )); then
               echo "::error::Missing live-mode Repository secrets: ${missing[*]}"
               echo "The previous report is preserved; demo data will not replace it."
@@ -102,7 +104,7 @@ jobs:
           import os
           from pathlib import Path
           text = Path("/tmp/market-report.log").read_text(encoding="utf-8", errors="replace")
-          for name in ("MASSIVE_API_KEY", "ALPACA_API_KEY_ID", "ALPACA_API_SECRET_KEY", "SEC_USER_AGENT", "GEMINI_API_KEY", "OLLAMA_API_KEY"):
+          for name in ("MASSIVE_API_KEY", "ALPACA_API_KEY_ID", "ALPACA_API_SECRET_KEY", "SEC_USER_AGENT", "OLLAMA_API_KEY"):
               secret = os.getenv(name, "")
               if secret:
                   text = text.replace(secret, "***")

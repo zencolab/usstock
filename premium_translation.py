@@ -6,13 +6,24 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from ai_translation import build_translation_backend
-from news_translation import INDUSTRY_OVERRIDES, _plain_text, _published_datetime, _summary_paragraphs, select_important_news
+from news_translation import (
+    INDUSTRY_OVERRIDES,
+    _plain_text,
+    _published_datetime,
+    _summary_paragraphs,
+    select_important_news,
+)
 
 
 class CachedAiTranslator:
     """Cached provider-neutral English-to-Chinese AI translation."""
 
-    def __init__(self, cache_dir: Path, *, translate_fn: Callable[[str], str] | None = None) -> None:
+    def __init__(
+        self,
+        cache_dir: Path,
+        *,
+        translate_fn: Callable[[str], str] | None = None,
+    ) -> None:
         self.backend = build_translation_backend(translate_fn=translate_fn)
         self.cache_dir = cache_dir / "translation"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -53,8 +64,9 @@ class CachedAiTranslator:
             elif source not in missing:
                 missing.append(source)
 
-        for offset in range(0, len(missing), 20):
-            batch = missing[offset : offset + 20]
+        batch_size = 20
+        for offset in range(0, len(missing), batch_size):
+            batch = missing[offset : offset + batch_size]
             translated = self.backend.translate_many(batch, industry=industry)
             if len(translated) != len(batch):
                 raise RuntimeError("AI translation response count mismatch")
@@ -63,7 +75,10 @@ class CachedAiTranslator:
                 if not target:
                     raise RuntimeError("AI translation returned an empty result")
                 translations[source] = target
-                self.cache[self._key(source, industry)] = {"source": source, "translation": target}
+                self.cache[self._key(source, industry)] = {
+                    "source": source,
+                    "translation": target,
+                }
                 self._dirty += 1
             if self._dirty >= 20:
                 self.flush()
@@ -81,21 +96,51 @@ class CachedAiTranslator:
         self._dirty = 0
 
 
-def bilingual_news(rows: Iterable[dict[str, Any]], report_date: Any, translator: CachedAiTranslator, *, limit: int = 5) -> list[dict[str, Any]]:
+def bilingual_news(
+    rows: Iterable[dict[str, Any]],
+    report_date: Any,
+    translator: CachedAiTranslator,
+    *,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for item in select_important_news(rows, report_date, limit=limit):
         headline_en = _plain_text(item.get("headline"))
         published = _published_datetime(item)
         paragraph_sources = _summary_paragraphs(item)
         translated = translator.translate_many([headline_en, *paragraph_sources])
-        paragraphs = [{"en": paragraph, "zh": target} for paragraph, target in zip(paragraph_sources, translated[1:])]
-        result.append({
-            "headline_en": headline_en,
-            "headline_zh": translated[0],
-            "published_at": published.date().isoformat() if published else "",
-            "source": str(item.get("source") or "Benzinga via Alpaca"),
-            "author": str(item.get("author") or ""),
-            "url": str(item.get("url") or ""),
-            "paragraphs": paragraphs,
-        })
+        paragraphs = [
+            {"en": paragraph, "zh": target}
+            for paragraph, target in zip(paragraph_sources, translated[1:])
+        ]
+        result.append(
+            {
+                "headline_en": headline_en,
+                "headline_zh": translated[0],
+                "published_at": published.date().isoformat() if published else "",
+                "source": str(item.get("source") or "Benzinga via Alpaca"),
+                "author": str(item.get("author") or ""),
+                "url": str(item.get("url") or ""),
+                "paragraphs": paragraphs,
+            }
+        )
     return result
+
+
+def collect_news_sources(
+    news_by_symbol: dict[str, Iterable[dict[str, Any]]],
+    report_date: Any,
+    *,
+    limit: int = 5,
+) -> list[str]:
+    """Collect unique source strings so cloud translation can be fully batched."""
+    sources: list[str] = []
+    seen: set[str] = set()
+    for rows in news_by_symbol.values():
+        for item in select_important_news(rows, report_date, limit=limit):
+            values = [_plain_text(item.get("headline")), *_summary_paragraphs(item)]
+            for value in values:
+                if value and value not in seen:
+                    seen.add(value)
+                    sources.append(value)
+    return sources
