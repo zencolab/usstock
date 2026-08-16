@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="{{ stock.symbol }} 收盘行情、基本面与卖空数据">
+  <meta name="description" content="{{ stock.symbol }} 收盘行情、基本面、卖空数据与双语新闻目录">
   <title>{{ stock.symbol }} · {{ report_date }}</title>
   <link rel="stylesheet" href="../assets/style.css">
 </head>
@@ -63,35 +63,36 @@
 
   <section class="section">
     <div class="container">
-      <h2>近三个月重要新闻</h2>
-      <p class="copy news-intro">按财报、业绩指引、并购、监管、融资、重大合同、管理层变动等事件筛选。保留英文原文摘要，并在每段下方提供中文机器翻译。</p>
+      <div class="section-heading-row">
+        <div>
+          <h2>近三个月全部新闻标题</h2>
+          {% if stock.news_window_start and stock.news_window_end %}
+          <p class="copy news-intro">日期范围：{{ stock.news_window_start }} 至 {{ stock.news_window_end }}（含首尾日期）。完整读取 Alpaca/Benzinga 分页结果，不进行重要性筛选；标题全部翻译并按日期从新到旧显示。</p>
+          {% else %}
+          <p class="copy news-intro">真实数据模式下展示完整三个月新闻目录。</p>
+          {% endif %}
+        </div>
+        {% if stock.news %}<span class="count-badge">{{ stock.news|length }} 条</span>{% endif %}
+      </div>
       {% if stock.news %}
-      <div class="news-list">
+      <ol class="news-index">
         {% for article in stock.news %}
-        <article class="card news-card">
+        <li class="card news-row">
           <div class="news-meta">
             {% if article.published_at %}<time datetime="{{ article.published_at }}">{{ article.published_at }}</time>{% endif %}
             {% if article.source %}<span>{{ article.source }}</span>{% endif %}
             {% if article.author %}<span>{{ article.author }}</span>{% endif %}
           </div>
-          <h3>{% if article.url %}<a href="{{ article.url }}" rel="noopener noreferrer">{{ article.headline_en }}</a>{% else %}{{ article.headline_en }}{% endif %}</h3>
-          <p class="headline-zh">{{ article.headline_zh }}</p>
-          {% for paragraph in article.paragraphs %}
-          <div class="bilingual-paragraph">
-            <div class="language-label">EN</div>
-            <p class="news-original">{{ paragraph.en }}</p>
-            <div class="language-label zh">中文</div>
-            <p class="news-translation">{{ paragraph.zh }}</p>
-          </div>
-          {% endfor %}
-          {% if article.url %}<a class="source-link" href="{{ article.url }}" rel="noopener noreferrer">阅读英文原文 →</a>{% endif %}
-        </article>
+          <h3><a href="{{ article.detail_url }}">{{ article.headline_zh }}</a></h3>
+          <p class="news-title-en">{{ article.headline_en }}</p>
+          <a class="source-link" href="{{ article.detail_url }}">查看英汉对照摘要 →</a>
+        </li>
         {% endfor %}
-      </div>
+      </ol>
       {% else %}
-      <div class="card notice">近三个月未筛选到符合重要事件规则的新闻，或该证券暂无可用新闻。</div>
+      <div class="card notice">该日期范围内，Alpaca/Benzinga 未返回与此证券关联的新闻。</div>
       {% endif %}
-      <p class="copy translation-disclaimer">中文内容由本地神经机器翻译模型自动生成，可能存在术语或语义偏差；投资判断请以英文原文为准。</p>
+      <p class="copy translation-disclaimer">标题及摘要由 {{ stock.translation_provider or 'Ollama Cloud AI' }} 自动翻译，可能存在术语或语义偏差。详情页保留英文内容和原文链接；本站只展示数据源提供的标题与摘要，不复制新闻全文。</p>
     </div>
   </section>
 

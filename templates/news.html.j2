@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="{{ stock.symbol }} 新闻英汉对照摘要">
+  <title>{{ article.headline_zh }} · {{ stock.symbol }}</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="container breadcrumb breadcrumb-links">
+  <a href="../stocks/{{ stock.file_name }}.html">← 返回 {{ stock.symbol }} 新闻目录</a>
+  <a href="../index.html">返回日报</a>
+</div>
+<header class="hero news-detail-hero">
+  <div class="container narrow">
+    <div class="eyebrow">{{ stock.name }} · {{ stock.symbol }}</div>
+    <h1>{{ article.headline_zh }}</h1>
+    <p class="news-detail-original-title">{{ article.headline_en }}</p>
+    <div class="news-meta detail-meta">
+      {% if article.published_at %}<time datetime="{{ article.published_iso or article.published_at }}">{{ article.published_at }}</time>{% endif %}
+      {% if article.source %}<span>{{ article.source }}</span>{% endif %}
+      {% if article.author %}<span>{{ article.author }}</span>{% endif %}
+    </div>
+  </div>
+</header>
+<main>
+  <section class="section">
+    <div class="container narrow">
+      <article class="card news-detail-card">
+        <h2>英汉对照摘要</h2>
+        {% if article.paragraphs %}
+          {% for paragraph in article.paragraphs %}
+          <div class="bilingual-paragraph detail-paragraph">
+            <div class="language-label">EN</div>
+            <p class="news-original" lang="en">{{ paragraph.en }}</p>
+            <div class="language-label zh">中文</div>
+            <p class="news-translation" lang="zh-CN">{{ paragraph.zh }}</p>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="notice">数据源未提供新闻摘要，请通过原文链接查看完整内容。</div>
+        {% endif %}
+        {% if article.url %}<a class="button-link" href="{{ article.url }}" rel="noopener noreferrer">打开英文原文 ↗</a>{% endif %}
+      </article>
+      <p class="copy translation-disclaimer">中文由 {{ stock.translation_provider or 'Ollama Cloud AI' }} 自动翻译。本站仅显示数据源提供的标题与摘要；完整新闻及最终解释以英文原文为准。</p>
+    </div>
+  </section>
+</main>
+<footer class="footer"><div class="container narrow">{{ stock.symbol }} · 报告日期 {{ report_date }} · 数据仅用于研究，不构成投资建议。</div></footer>
+</body>
+</html>
