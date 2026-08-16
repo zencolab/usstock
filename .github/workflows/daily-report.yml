@@ -21,10 +21,6 @@ on:
         required: true
         default: "100"
         type: string
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/daily-report.yml"
 
 permissions:
   contents: write
