@@ -1,0 +1,62 @@
+name: Ollama Cloud credential test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ollama-cloud-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test-ollama-cloud:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Call gemma4 cloud API
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          api_key = os.getenv("OLLAMA_API_KEY", "").strip()
+          if not api_key:
+              raise SystemExit("OLLAMA_API_KEY Repository secret is missing")
+
+          payload = json.dumps({
+              "model": "gemma4:cloud",
+              "messages": [
+                  {"role": "system", "content": "Translate English financial news to concise Simplified Chinese. Return Chinese only."},
+                  {"role": "user", "content": "Accelerant is going private in a $4 billion Thoma Bravo deal."},
+              ],
+              "stream": False,
+              "options": {"temperature": 0.1},
+          }).encode("utf-8")
+          request = urllib.request.Request(
+              "https://ollama.com/api/chat",
+              data=payload,
+              method="POST",
+              headers={
+                  "Authorization": f"Bearer {api_key}",
+                  "Content-Type": "application/json",
+              },
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=180) as response:
+                  result = json.loads(response.read().decode("utf-8"))
+          except urllib.error.HTTPError as exc:
+              detail = exc.read().decode("utf-8", errors="replace")[:500]
+              raise SystemExit(f"Ollama Cloud rejected the request (HTTP {exc.code}): {detail}") from exc
+
+          translation = str((result.get("message") or {}).get("content") or "").strip()
+          if not translation:
+              raise SystemExit("Ollama Cloud returned an empty translation")
+          print("Ollama Cloud connection succeeded")
+          print("Model:", result.get("model") or "gemma4:cloud")
+          print("Translation:", translation)
+          PY
