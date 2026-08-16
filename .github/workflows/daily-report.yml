@@ -1,6 +1,8 @@
 name: US market close report
 
 on:
+  push:
+    branches: [main]
   schedule:
     - cron: "30 18 * * 1-5"
       timezone: "America/New_York"
@@ -36,7 +38,7 @@ env:
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -45,9 +47,10 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Compile and run offline smoke test
+      - name: Compile, test, and run offline smoke test
         run: |
           python -m py_compile market_report.py hybrid_data.py hybrid_runtime.py bilingual_runtime.py news_translation.py premium_translation.py ai_translation.py scripts/validate_output.py
+          python -m unittest discover -s tests -p 'test_*.py' -v
           python market_report.py --mode demo --date 2026-08-10 --top-n 2 --output site-smoke --data-output output-smoke
           python scripts/validate_output.py site-smoke --expected-min 2 --expected-mode demo
           rm -rf site-smoke output-smoke
@@ -64,11 +67,14 @@ jobs:
           ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
           ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
           ALPACA_FEED: ${{ vars.ALPACA_FEED || 'iex' }}
+          ALPACA_NEWS_RPM: ${{ vars.ALPACA_NEWS_RPM || '180' }}
+          ALPACA_NEWS_MAX_PAGES: ${{ vars.ALPACA_NEWS_MAX_PAGES || '100' }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           SEC_RPS: ${{ vars.SEC_RPS || '5' }}
           TRANSLATION_PROVIDER: ollama
           OLLAMA_BASE_URL: https://ollama.com/api
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          OLLAMA_API_KEY_FALLBACK: ${{ secrets.OLLAMA_API_KEY_FALLBACK }}
           OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL || 'gemma4:cloud' }}
           OLLAMA_RPM: ${{ vars.OLLAMA_RPM || '20' }}
         shell: bash
@@ -100,7 +106,7 @@ jobs:
           import os
           from pathlib import Path
           text = Path("/tmp/market-report.log").read_text(encoding="utf-8", errors="replace")
-          for name in ("MASSIVE_API_KEY", "ALPACA_API_KEY_ID", "ALPACA_API_SECRET_KEY", "SEC_USER_AGENT", "OLLAMA_API_KEY"):
+          for name in ("MASSIVE_API_KEY", "ALPACA_API_KEY_ID", "ALPACA_API_SECRET_KEY", "SEC_USER_AGENT", "OLLAMA_API_KEY", "OLLAMA_API_KEY_FALLBACK"):
               secret = os.getenv(name, "")
               if secret:
                   text = text.replace(secret, "***")
