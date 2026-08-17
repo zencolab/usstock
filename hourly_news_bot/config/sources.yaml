@@ -1,0 +1,105 @@
+defaults:
+  max_items_per_source: 12
+
+sources:
+  - id: yahoo_finance
+    name: Yahoo Finance
+    home_url: https://finance.yahoo.com/news/
+    feeds:
+      - https://finance.yahoo.com/rss/topstories
+      - https://finance.yahoo.com/news/rssindex
+    selectors:
+      - container: article
+        link: a[href]
+        title: h1, h2, h3, [role="heading"]
+        summary: p
+        time: time
+      - container: li
+        link: a[href]
+        title: h2, h3, a[href]
+        summary: p
+        time: time
+
+  - id: google_finance
+    name: Google Finance
+    home_url: https://www.google.com/finance/?hl=en
+    feeds: []
+    selectors:
+      - container: article
+        link: a[href]
+        title: h1, h2, h3, [role="heading"]
+        summary: p
+        time: time
+      - container: div[role="listitem"]
+        link: a[href]
+        title: a[href], [role="heading"]
+        summary: p
+        time: time
+
+  - id: barrons
+    name: Barron's
+    home_url: https://www.barrons.com/market-data
+    feeds: []
+    selectors:
+      - container: article
+        link: a[href]
+        title: h1, h2, h3
+        summary: p
+        time: time
+
+  - id: cnbc
+    name: CNBC
+    home_url: https://www.cnbc.com/markets/
+    feeds:
+      - https://www.cnbc.com/id/100003114/device/rss/rss.html
+    selectors:
+      - container: article
+        link: a[href]
+        title: h1, h2, h3
+        summary: p
+        time: time
+      - container: div[class*="Card"]
+        link: a[href]
+        title: h2, h3, a[href]
+        summary: p
+        time: time
+
+  - id: marketwatch
+    name: MarketWatch
+    home_url: https://www.marketwatch.com/markets/us
+    feeds:
+      - https://feeds.content.dowjones.io/public/rss/mw_topstories
+    selectors:
+      - container: article
+        link: a[href]
+        title: h1, h2, h3
+        summary: p
+        time: time
+
+  - id: reuters
+    name: Reuters
+    home_url: https://www.reuters.com/markets/us/
+    feeds: []
+    selectors:
+      - container: article
+        link: a[href]
+        title: h1, h2, h3, [data-testid*="Heading"]
+        summary: p
+        time: time
+      - container: li
+        link: a[href]
+        title: h2, h3, a[href]
+        summary: p
+        time: time
+
+  - id: bloomberg
+    name: Bloomberg
+    home_url: https://www.bloomberg.com/markets
+    feeds:
+      - https://feeds.bloomberg.com/markets/news.rss
+    selectors:
+      - container: article
+        link: a[href]
+        title: h1, h2, h3
+        summary: p
+        time: time
