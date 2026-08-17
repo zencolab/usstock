@@ -157,7 +157,16 @@ def main() -> int:
 
     if not args.dry_run and gateway:
         info = gateway.ping()
-        LOGGER.info("Connected to %s at %s", info.get("service", "Drive gateway"), info.get("base_path", ""))
+        target_path = info.get("us_stock_news_path")
+        if not target_path:
+            raise RuntimeError(
+                "Drive gateway does not advertise us_stock_news_path; redeploy Apps Script"
+            )
+        LOGGER.info(
+            "Connected to %s at %s",
+            info.get("service", "Drive gateway"),
+            target_path,
+        )
         uploads = [
             (markdown_name, "text/markdown", markdown),
             (json_name, "application/json", json_text),

@@ -10,22 +10,22 @@
 https://script.google.com/macros/s/AKfycbx3JuXMbJOAiiHhUUl3MIQrM2LYlZgCQhkiCNajewFpJxTiRl5cFMXjq45Z_gBqYvHB/exec
 ```
 
-客户端按照网关的 `run_file` 协议发送：`token`、`run_id`、`sha256`、`file_name`、`mime_type`、`content_base64`。三个报告会保存到：
+客户端按照网关的 `us_stock_news_file` 协议发送：`token`、`run_id`、`sha256`、`file_name`、`mime_type`、`content_base64`。三个报告会保存到：
 
 ```text
-<BASE_PATH>/runs/YYYY/YYYY-MM/<run_id>/
+美股资讯/每小时新闻/runs/YYYY/YYYY-MM/<run_id>/
 ```
 
-当前 Apps Script 的 `BASE_PATH` 决定最终 Drive 目录。
+该专用操作不会使用原有 `BASE_PATH`，因此不会与 CNINFO 机构调研文件混放。
 
 ## GitHub Secrets
 
 在 **Settings → Secrets and variables → Actions** 中配置：
 
 - `OLLAMA_API_KEY`
-- `AGENT_UPLOAD_TOKEN`：Apps Script 中新生成的 `AGENT_UPLOAD_TOKEN`；也兼容备用名称 `DRIVE_GATEWAY_TOKEN`
+- `AGENT_UPLOAD_TOKEN`：Apps Script 中配置的 `AGENT_UPLOAD_TOKEN`；也兼容备用名称 `DRIVE_GATEWAY_TOKEN`
 
-截图中曾显示过的旧 Token 应立即轮换，不能提交到代码库或发送到聊天中。
+测试环境可继续使用现有 Token；生产环境请轮换已公开的 Token，且不要提交到代码库或聊天中。
 
 可选 Variables：
 
@@ -43,7 +43,7 @@ https://script.google.com/macros/s/AKfycbx3JuXMbJOAiiHhUUl3MIQrM2LYlZgCQhkiCNaje
 2. 恢复跨运行去重状态；
 3. 抓取并翻译新资讯；
 4. 调用网关 `ping`；
-5. 通过 `run_file` 上传 `.md`、`.json`、`.html`；
+5. 通过 `us_stock_news_file` 上传 `.md`、`.json`、`.html`；
 6. 将生成结果额外保存为 GitHub Actions Artifact 7 天。
 
 ## 本地运行

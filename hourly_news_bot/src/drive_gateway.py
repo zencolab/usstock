@@ -88,7 +88,7 @@ class AppsScriptDriveGateway:
             raise ValueError("file_name must not contain path separators")
         payload = {
             "token": self.token,
-            "operation": "run_file",
+            "operation": "us_stock_news_file",
             "run_id": run_id,
             "sha256": hashlib.sha256(content).hexdigest(),
             "file_name": file_name,

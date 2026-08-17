@@ -37,7 +37,7 @@ class DriveGatewayTests(unittest.TestCase):
         self.assertEqual(result["service"], "CNINFO Drive Gateway")
 
     @patch("src.drive_gateway.urlopen")
-    def test_run_file_payload_matches_gateway(self, mocked_urlopen) -> None:
+    def test_us_stock_news_file_payload_matches_gateway(self, mocked_urlopen) -> None:
         mocked_urlopen.return_value = FakeResponse(
             {"ok": True, "result": {"status": "created", "drive_path": "x/report.html"}}
         )
@@ -51,7 +51,7 @@ class DriveGatewayTests(unittest.TestCase):
         )
         request = mocked_urlopen.call_args.args[0]
         payload = json.loads(request.data.decode("utf-8"))
-        self.assertEqual(payload["operation"], "run_file")
+        self.assertEqual(payload["operation"], "us_stock_news_file")
         self.assertEqual(payload["run_id"], "20260817-135300Z")
         self.assertEqual(payload["file_name"], "report.html")
         self.assertEqual(payload["mime_type"], "text/html")
