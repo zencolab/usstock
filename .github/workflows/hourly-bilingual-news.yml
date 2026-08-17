@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  DRIVE_GATEWAY_URL: https://script.google.com/macros/s/AKfycbx3JuXMbJOAiiHhUUl3MIQrM2LYlZgCQhkiCNajewFpJxTiRl5cFMXjq45Z_gBqYvHB/exec
+
 concurrency:
   group: hourly-bilingual-news
   cancel-in-progress: false
@@ -23,8 +26,7 @@ jobs:
       OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
       OLLAMA_BASE_URL: ${{ vars.OLLAMA_BASE_URL }}
       OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL }}
-      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-      GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+      DRIVE_GATEWAY_TOKEN: ${{ secrets.AGENT_UPLOAD_TOKEN || secrets.DRIVE_GATEWAY_TOKEN }}
       REPORT_TIMEZONE: ${{ vars.REPORT_TIMEZONE }}
       MAX_AGE_HOURS: ${{ vars.MAX_AGE_HOURS }}
       MAX_ITEMS_PER_SOURCE: ${{ vars.MAX_ITEMS_PER_SOURCE }}
@@ -44,13 +46,29 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s tests -v
 
-      - name: Validate Ollama secret
+      - name: Validate required secrets
         shell: bash
         run: |
           test -n "$OLLAMA_API_KEY" || { echo "Missing OLLAMA_API_KEY"; exit 1; }
+          test -n "$DRIVE_GATEWAY_TOKEN" || { echo "Missing AGENT_UPLOAD_TOKEN or DRIVE_GATEWAY_TOKEN"; exit 1; }
+
+      - name: Restore dedupe state
+        uses: actions/cache/restore@v4
+        with:
+          path: hourly_news_bot/state
+          key: hourly-news-state-${{ github.run_id }}
+          restore-keys: |
+            hourly-news-state-
 
       - name: Collect, translate and upload
         run: python -m src.main
+
+      - name: Save dedupe state
+        if: always() && hashFiles('hourly_news_bot/state/crawler-state.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: hourly_news_bot/state
+          key: hourly-news-state-${{ github.run_id }}
 
       - name: Keep generated Markdown, JSON and HTML
         if: always()

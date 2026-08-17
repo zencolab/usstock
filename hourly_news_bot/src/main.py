@@ -12,7 +12,7 @@ import yaml
 from dotenv import load_dotenv
 
 from .crawler import NewsCrawler
-from .drive_store import GoogleDriveStore
+from .drive_gateway import AppsScriptDriveGateway
 from .report import render_html, render_markdown
 from .translator import OllamaTranslator
 
@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=ROOT / "config" / "sources.yaml")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "output")
     parser.add_argument("--source", action="append", help="Run only the specified source id")
-    parser.add_argument("--dry-run", action="store_true", help="Write locally without Google Drive upload")
+    parser.add_argument("--dry-run", action="store_true", help="Write locally without gateway upload")
     parser.add_argument("--no-translate", action="store_true", help="Skip Ollama translation")
     return parser.parse_args()
 
@@ -75,12 +75,16 @@ def main() -> int:
     timezone_name = os.getenv("REPORT_TIMEZONE") or "UTC"
     sources = load_sources(args.config, set(args.source or []) or None)
 
-    service_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
-    folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
-    drive = GoogleDriveStore(service_json, folder_id) if service_json and folder_id else None
+    gateway_url = os.getenv("DRIVE_GATEWAY_URL", "").strip()
+    gateway_token = os.getenv("DRIVE_GATEWAY_TOKEN", "").strip()
+    gateway = (
+        AppsScriptDriveGateway(gateway_url, gateway_token)
+        if gateway_url and gateway_token
+        else None
+    )
+
     local_state_path = ROOT / "state" / "crawler-state.json"
-    state = drive.load_json("crawler-state.json") if drive else load_local_state(local_state_path)
-    state = state or {"seen": {}}
+    state = load_local_state(local_state_path)
     seen = prune_seen(dict(state.get("seen", {})), now)
 
     crawler = NewsCrawler(
@@ -134,42 +138,48 @@ def main() -> int:
         "errors": all_errors,
         "items": [item.to_dict() for item in new_items],
     }
+    json_text = json.dumps(report_payload, ensure_ascii=False, indent=2)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     stamp = now.strftime("%Y%m%d-%H%MZ")
+    run_id = now.strftime("%Y%m%d-%H%M%SZ")
     markdown_name = f"us-stock-news-{stamp}.md"
     json_name = f"us-stock-news-{stamp}.json"
     html_name = f"us-stock-news-{stamp}.html"
     (args.output_dir / markdown_name).write_text(markdown, encoding="utf-8")
+    (args.output_dir / json_name).write_text(json_text, encoding="utf-8")
     (args.output_dir / html_name).write_text(html, encoding="utf-8")
-    (args.output_dir / json_name).write_text(
-        json.dumps(report_payload, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
 
     for item in new_items:
         seen[item.key] = now.isoformat()
     state = {"updated_at": now.isoformat(), "seen": prune_seen(seen, now)}
+    save_local_state(local_state_path, state)
 
-    if args.dry_run or not drive:
-        if not drive and not args.dry_run:
-            LOGGER.warning("Drive is not configured; report was written locally only")
-        save_local_state(local_state_path, state)
-    else:
-        drive.upload_text(markdown_name, markdown, "text/markdown")
-        drive.upload_text("latest-us-stock-news.md", markdown, "text/markdown")
-        drive.upload_text(html_name, html, "text/html")
-        drive.upload_text("latest-us-stock-news.html", html, "text/html")
-        drive.upload_text(
-            json_name, json.dumps(report_payload, ensure_ascii=False, indent=2), "application/json"
-        )
-        drive.upload_text(
-            "latest-us-stock-news.json",
-            json.dumps(report_payload, ensure_ascii=False, indent=2),
-            "application/json",
-        )
-        drive.save_json("crawler-state.json", state)
+    if not args.dry_run and gateway:
+        info = gateway.ping()
+        LOGGER.info("Connected to %s at %s", info.get("service", "Drive gateway"), info.get("base_path", ""))
+        uploads = [
+            (markdown_name, "text/markdown", markdown),
+            (json_name, "application/json", json_text),
+            (html_name, "text/html", html),
+        ]
+        for file_name, mime_type, content in uploads:
+            result = gateway.upload_text(
+                run_id=run_id,
+                file_name=file_name,
+                mime_type=mime_type,
+                content=content,
+            )
+            LOGGER.info(
+                "Drive %s: %s (%s)",
+                result.get("status", "uploaded"),
+                result.get("drive_path", file_name),
+                result.get("web_view_link", ""),
+            )
+    elif not args.dry_run:
+        LOGGER.warning("Apps Script Drive gateway is not configured; files remain local")
 
-    LOGGER.info("Created %s with %s new items", markdown_name, len(new_items))
+    LOGGER.info("Created %s, %s and %s with %s new items", markdown_name, json_name, html_name, len(new_items))
     return 0 if any(source_counts.values()) else 2
 
 
