@@ -15,7 +15,7 @@ import requests
 
 DEFAULT_HOLDINGS_URL = (
     "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/"
-    "1467271812596.ajax?fileType=csv&fileName=IWM_holdings&dataType=fund"
+    "latest-holdings.csv"
 )
 
 
@@ -176,7 +176,14 @@ def load_russell2000_universe(cache_dir: Path, *, force_refresh: bool = False) -
             timeout=60,
         )
         response.raise_for_status()
-        symbols, as_of = parse_ishares_holdings_csv(response.text)
+        response_text = response.text
+        content_type = response.headers.get("Content-Type", "").lower()
+        leading_text = response_text.lstrip("\ufeff\n\r\t ")[:100].lower()
+        if "text/html" in content_type or leading_text.startswith(("<!doctype html", "<html")):
+            raise ValueError(
+                "iShares holdings endpoint returned HTML instead of the holdings CSV"
+            )
+        symbols, as_of = parse_ishares_holdings_csv(response_text)
         symbols = validate_universe(symbols, minimum=minimum, maximum=maximum)
         snapshot = UniverseSnapshot(
             symbols=symbols,
