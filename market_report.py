@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 _parts_dir = Path(__file__).resolve().parent / "market_report_src"
@@ -7,6 +8,10 @@ if not _source.endswith(_entrypoint):
     raise RuntimeError("Unexpected report source entrypoint")
 _source = _source[: -len(_entrypoint)]
 exec(compile(_source, str(Path(__file__).with_name("market_report_source.py")), "exec"), globals(), globals())
+
+_cache_override = os.getenv("MARKET_REPORT_CACHE_DIR", "").strip()
+if _cache_override:
+    CACHE_DIR = Path(_cache_override).expanduser().resolve()
 
 from hybrid_runtime import install as _install_hybrid_runtime
 from bilingual_runtime import install as _install_bilingual_runtime

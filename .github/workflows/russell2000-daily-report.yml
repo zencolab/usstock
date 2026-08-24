@@ -1,11 +1,9 @@
-name: US market close report
+name: Russell 2000 market close report
 
 on:
   schedule:
-    # GitHub Actions cron uses UTC. Run both UTC candidates and keep only
-    # the one that maps to 18:30 in New York for the current DST offset.
-    - cron: "30 22 * * 1-5"
-    - cron: "30 23 * * 1-5"
+    - cron: "45 22 * * 1-5"
+    - cron: "45 23 * * 1-5"
   workflow_dispatch:
     inputs:
       trade_date:
@@ -19,7 +17,7 @@ on:
         type: choice
         options: [live, demo]
       top_n:
-        description: "Number of gainers and losers"
+        description: "Number of Russell 2000 gainers and losers"
         required: true
         default: "100"
         type: string
@@ -33,8 +31,9 @@ concurrency:
 
 env:
   PYTHONUNBUFFERED: "1"
-  XDG_DATA_HOME: ${{ github.workspace }}/.cache/xdg-data
+  XDG_DATA_HOME: ${{ github.workspace }}/russell2000_market_report/.cache/xdg-data
   DRIVE_GATEWAY_URL: https://script.google.com/macros/s/AKfycbx3JuXMbJOAiiHhUUl3MIQrM2LYlZgCQhkiCNajewFpJxTiRl5cFMXjq45Z_gBqYvHB/exec
+  RUSSELL2000_HOLDINGS_URL: ${{ vars.RUSSELL2000_HOLDINGS_URL }}
 
 jobs:
   schedule-gate:
@@ -42,7 +41,7 @@ jobs:
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
     steps:
-      - name: Select the New York 18:30 schedule
+      - name: Select the New York 18:45 schedule
         id: check
         env:
           EVENT_SCHEDULE: ${{ github.event.schedule }}
@@ -52,10 +51,9 @@ jobs:
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
           NY_OFFSET="$(TZ=America/New_York date +%z)"
-          if [[ "$NY_OFFSET" == "-0400" && "$EVENT_SCHEDULE" == "30 22 * * 1-5" ]] ||
-             [[ "$NY_OFFSET" == "-0500" && "$EVENT_SCHEDULE" == "30 23 * * 1-5" ]]; then
+          if [[ "$NY_OFFSET" == "-0400" && "$EVENT_SCHEDULE" == "45 22 * * 1-5" ]] ||
+             [[ "$NY_OFFSET" == "-0500" && "$EVENT_SCHEDULE" == "45 23 * * 1-5" ]]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=false" >> "$GITHUB_OUTPUT"
@@ -66,7 +64,7 @@ jobs:
     needs: schedule-gate
     if: needs.schedule-gate.outputs.should_run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -85,19 +83,20 @@ jobs:
           fi
       - name: Compile, test, and run offline smoke test
         run: |
-          python -m py_compile market_report.py hybrid_data.py hybrid_runtime.py bilingual_runtime.py news_translation.py premium_translation.py ai_translation.py scripts/validate_output.py scripts/render_market_report_pdf.py scripts/upload_market_report_drive.py hourly_news_bot/src/drive_gateway.py
-          python -m unittest discover -s tests -p 'test_*.py' -v
-          python market_report.py --mode demo --date 2026-08-10 --top-n 2 --output site-smoke --data-output output-smoke
-          python scripts/validate_output.py site-smoke --expected-min 2 --expected-mode demo
-          python scripts/render_market_report_pdf.py --site site-smoke --output pdf-smoke/market-close-summary.pdf
-          rm -rf site-smoke output-smoke pdf-smoke
-      - name: Restore API cache
+          python -m py_compile russell2000_market_report/main.py russell2000_market_report/universe.py russell2000_market_report/runtime.py russell2000_market_report/scripts/validate_output.py
+          python -m unittest discover -s russell2000_market_report/tests -p 'test_*.py' -v
+          python -m russell2000_market_report.main --mode demo --date 2026-08-10 --top-n 2 --output russell2000_market_report/site-smoke --data-output russell2000_market_report/output-smoke
+          python scripts/validate_output.py russell2000_market_report/site-smoke --expected-min 2 --expected-mode demo
+          python russell2000_market_report/scripts/validate_output.py russell2000_market_report/site-smoke --expected-mode demo --expected-top-n 2
+          python scripts/render_market_report_pdf.py --site russell2000_market_report/site-smoke --output russell2000_market_report/pdf-smoke/summary.pdf
+          rm -rf russell2000_market_report/site-smoke russell2000_market_report/output-smoke russell2000_market_report/pdf-smoke
+      - name: Restore Russell 2000 cache
         uses: actions/cache@v4
         with:
-          path: .cache
-          key: market-cache-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: market-cache-${{ runner.os }}-
-      - name: Generate report
+          path: russell2000_market_report/.cache
+          key: russell2000-cache-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: russell2000-cache-${{ runner.os }}-
+      - name: Generate Russell 2000 report
         env:
           MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
           MASSIVE_RPM: ${{ secrets.MASSIVE_RPM || '5' }}
@@ -128,65 +127,66 @@ jobs:
             [[ -z "${OLLAMA_API_KEY:-}" ]] && missing+=(OLLAMA_API_KEY)
             if (( ${#missing[@]} > 0 )); then
               echo "::error::Missing live-mode Repository secrets: ${missing[*]}"
-              echo "The previous report is preserved; demo data will not replace it."
               exit 1
             fi
           fi
           DATE_ARG=()
           if [[ -n "$TRADE_DATE" ]]; then DATE_ARG=(--date "$TRADE_DATE"); fi
           set +e
-          python market_report.py --mode "$MODE" --top-n "$TOP_N" --output site --data-output output "${DATE_ARG[@]}" 2>&1 | tee /tmp/market-report.log
+          python -m russell2000_market_report.main --mode "$MODE" --top-n "$TOP_N" --output russell2000_market_report/site --data-output russell2000_market_report/output "${DATE_ARG[@]}" 2>&1 | tee /tmp/russell2000-report.log
           REPORT_STATUS=${PIPESTATUS[0]}
           set -e
           if [[ "$REPORT_STATUS" -ne 0 ]]; then
             python - <<'PY'
           import os
           from pathlib import Path
-          text = Path("/tmp/market-report.log").read_text(encoding="utf-8", errors="replace")
+          text = Path("/tmp/russell2000-report.log").read_text(encoding="utf-8", errors="replace")
           for name in ("MASSIVE_API_KEY", "ALPACA_API_KEY_ID", "ALPACA_API_SECRET_KEY", "SEC_USER_AGENT", "OLLAMA_API_KEY", "OLLAMA_API_KEY_FALLBACK"):
               secret = os.getenv(name, "")
               if secret:
                   text = text.replace(secret, "***")
           lines = [line.strip() for line in text.splitlines() if line.strip()]
-          message = " | ".join(lines[-8:])[-3800:] or "Unknown live report error"
+          message = " | ".join(lines[-10:])[-3800:] or "Unknown Russell 2000 report error"
           message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-          print(f"::error title=Live report failed::{message}")
+          print(f"::error title=Russell 2000 report failed::{message}")
           PY
             exit "$REPORT_STATUS"
           fi
-          python scripts/validate_output.py site --expected-min "$TOP_N" --expected-mode "$MODE"
-      - name: Render Drive preview PDF
-        run: python scripts/render_market_report_pdf.py --site site --output .drive-upload/market-close-summary.pdf
-      - name: Upload dated data and report
+          python scripts/validate_output.py russell2000_market_report/site --expected-min "$TOP_N" --expected-mode "$MODE"
+          python russell2000_market_report/scripts/validate_output.py russell2000_market_report/site --expected-mode "$MODE" --expected-top-n "$TOP_N"
+      - name: Render Russell 2000 Drive preview PDF
+        run: python scripts/render_market_report_pdf.py --site russell2000_market_report/site --output russell2000_market_report/.drive-upload/market-close-summary.pdf
+      - name: Upload Russell 2000 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: market-report-${{ github.run_id }}
+          name: russell2000-market-report-${{ github.run_id }}
           path: |
-            site
-            output
-            .drive-upload/market-close-summary.pdf
+            russell2000_market_report/site
+            russell2000_market_report/output
+            russell2000_market_report/.drive-upload/market-close-summary.pdf
           retention-days: 90
-      - name: Prepare GitHub Pages branch
+      - name: Prepare Russell 2000 Pages directory
         run: |
-          mkdir -p publish/site
-          cp -a site/. publish/site/
-          touch publish/.nojekyll publish/site/.nojekyll
-          cat > publish/index.html <<'HTML'
-          <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="0; url=site/index.html"><title>美股收盘日报</title><script>location.replace('site/index.html');</script></head><body><p>正在打开<a href="site/index.html">美股收盘日报</a>…</p></body></html>
+          mkdir -p publish-russell2000/site
+          cp -a russell2000_market_report/site/. publish-russell2000/site/
+          touch publish-russell2000/.nojekyll publish-russell2000/site/.nojekyll
+          cat > publish-russell2000/index.html <<'HTML'
+          <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="0; url=site/index.html"><title>罗素 2000 收盘日报</title><script>location.replace('site/index.html');</script></head><body><p>正在打开<a href="site/index.html">罗素 2000 收盘日报</a>…</p></body></html>
           HTML
-      - name: Publish GitHub Pages
+      - name: Publish Russell 2000 Pages subdirectory
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
-          publish_dir: ./publish
+          publish_dir: ./publish-russell2000
+          destination_dir: russell2000
           keep_files: true
           force_orphan: false
           enable_jekyll: false
-      - name: Upload PDF and archive to Google Drive
+      - name: Upload Russell 2000 PDF and archive to Google Drive
         env:
           DRIVE_GATEWAY_TOKEN: ${{ secrets.AGENT_UPLOAD_TOKEN || secrets.DRIVE_GATEWAY_TOKEN }}
-          DRIVE_MARKET_REPORT_OPERATION: ${{ vars.DRIVE_MARKET_REPORT_OPERATION || 'us_stock_news_file' }}
+          DRIVE_MARKET_REPORT_OPERATION: ${{ vars.RUSSELL2000_DRIVE_OPERATION || vars.DRIVE_MARKET_REPORT_OPERATION || 'us_stock_news_file' }}
         shell: bash
         run: |
           if [[ -z "${DRIVE_GATEWAY_TOKEN:-}" ]]; then
@@ -194,7 +194,8 @@ jobs:
             exit 1
           fi
           python scripts/upload_market_report_drive.py \
-            --site site \
-            --data-output output \
-            --archive-output .drive-upload \
-            --pdf .drive-upload/market-close-summary.pdf
+            --site russell2000_market_report/site \
+            --data-output russell2000_market_report/output \
+            --archive-output russell2000_market_report/.drive-upload \
+            --pdf russell2000_market_report/.drive-upload/market-close-summary.pdf \
+            --file-prefix russell2000-market-close

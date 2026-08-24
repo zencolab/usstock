@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import zipfile
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -77,6 +78,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--archive-output", type=Path, default=Path(".drive-upload"))
     parser.add_argument("--pdf", type=Path)
     parser.add_argument(
+        "--file-prefix",
+        default=os.getenv("MARKET_REPORT_FILE_PREFIX") or "us-market-close",
+    )
+    parser.add_argument(
         "--gateway-url",
         default=os.getenv("DRIVE_GATEWAY_URL") or DEFAULT_GATEWAY_URL,
     )
@@ -97,14 +102,18 @@ def main() -> int:
     if not args.gateway_token.strip():
         raise SystemExit("Missing AGENT_UPLOAD_TOKEN or DRIVE_GATEWAY_TOKEN")
 
+    file_prefix = args.file_prefix.strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", file_prefix):
+        raise SystemExit("file prefix may contain only letters, numbers, dots, underscores and hyphens")
+
     metadata, report_date = read_metadata(args.site)
     operation = args.operation.strip()
     run_id = args.run_id.strip() or datetime.now(UTC).strftime("%Y%m%d-%H%M%SZ")
     workflow_run_id = os.getenv("GITHUB_RUN_ID", "").strip()
     file_suffix = f"-{workflow_run_id}" if workflow_run_id else ""
-    archive_name = f"us-market-close-{report_date}{file_suffix}.zip"
-    metadata_name = f"us-market-close-{report_date}{file_suffix}-metadata.json"
-    pdf_name = f"us-market-close-{report_date}{file_suffix}.pdf"
+    archive_name = f"{file_prefix}-{report_date}{file_suffix}.zip"
+    metadata_name = f"{file_prefix}-{report_date}{file_suffix}-metadata.json"
+    pdf_name = f"{file_prefix}-{report_date}{file_suffix}.pdf"
     archive_path = build_archive(
         args.site,
         args.data_output,
