@@ -75,13 +75,22 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Ensure Chinese PDF fonts
+        shell: bash
+        run: |
+          if ! fc-match "Noto Sans CJK SC" | grep -qi "NotoSansCJK"; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+            fc-cache -f >/dev/null
+          fi
       - name: Compile, test, and run offline smoke test
         run: |
-          python -m py_compile market_report.py hybrid_data.py hybrid_runtime.py bilingual_runtime.py news_translation.py premium_translation.py ai_translation.py scripts/validate_output.py scripts/upload_market_report_drive.py hourly_news_bot/src/drive_gateway.py
+          python -m py_compile market_report.py hybrid_data.py hybrid_runtime.py bilingual_runtime.py news_translation.py premium_translation.py ai_translation.py scripts/validate_output.py scripts/render_market_report_pdf.py scripts/upload_market_report_drive.py hourly_news_bot/src/drive_gateway.py
           python -m unittest discover -s tests -p 'test_*.py' -v
           python market_report.py --mode demo --date 2026-08-10 --top-n 2 --output site-smoke --data-output output-smoke
           python scripts/validate_output.py site-smoke --expected-min 2 --expected-mode demo
-          rm -rf site-smoke output-smoke
+          python scripts/render_market_report_pdf.py --site site-smoke --output pdf-smoke/market-close-summary.pdf
+          rm -rf site-smoke output-smoke pdf-smoke
       - name: Restore API cache
         uses: actions/cache@v4
         with:
@@ -146,6 +155,8 @@ jobs:
             exit "$REPORT_STATUS"
           fi
           python scripts/validate_output.py site --expected-min "$TOP_N" --expected-mode "$MODE"
+      - name: Render Drive preview PDF
+        run: python scripts/render_market_report_pdf.py --site site --output .drive-upload/market-close-summary.pdf
       - name: Upload dated data and report
         uses: actions/upload-artifact@v4
         with:
@@ -153,6 +164,7 @@ jobs:
           path: |
             site
             output
+            .drive-upload/market-close-summary.pdf
           retention-days: 90
       - name: Prepare GitHub Pages branch
         run: |
@@ -170,7 +182,7 @@ jobs:
           publish_dir: ./publish
           force_orphan: true
           enable_jekyll: false
-      - name: Upload report package to Google Drive
+      - name: Upload PDF and archive to Google Drive
         env:
           DRIVE_GATEWAY_TOKEN: ${{ secrets.AGENT_UPLOAD_TOKEN || secrets.DRIVE_GATEWAY_TOKEN }}
           DRIVE_MARKET_REPORT_OPERATION: ${{ vars.DRIVE_MARKET_REPORT_OPERATION || 'us_stock_news_file' }}
@@ -183,4 +195,5 @@ jobs:
           python scripts/upload_market_report_drive.py \
             --site site \
             --data-output output \
-            --archive-output .drive-upload
+            --archive-output .drive-upload \
+            --pdf .drive-upload/market-close-summary.pdf

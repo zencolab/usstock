@@ -37,6 +37,15 @@ def read_metadata(site: Path) -> tuple[dict[str, Any], str]:
     return metadata, report_date
 
 
+def read_pdf(path: Path) -> bytes:
+    if not path.is_file():
+        raise ValueError(f"Drive preview PDF is missing: {path}")
+    content = path.read_bytes()
+    if len(content) < 1024 or not content.startswith(b"%PDF-"):
+        raise ValueError(f"Drive preview PDF is invalid or empty: {path}")
+    return content
+
+
 def build_archive(site: Path, data_output: Path, destination: Path) -> Path:
     for directory in (site, data_output):
         if not directory.is_dir():
@@ -66,6 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--site", type=Path, default=Path("site"))
     parser.add_argument("--data-output", type=Path, default=Path("output"))
     parser.add_argument("--archive-output", type=Path, default=Path(".drive-upload"))
+    parser.add_argument("--pdf", type=Path)
     parser.add_argument(
         "--gateway-url",
         default=os.getenv("DRIVE_GATEWAY_URL") or DEFAULT_GATEWAY_URL,
@@ -94,6 +104,7 @@ def main() -> int:
     file_suffix = f"-{workflow_run_id}" if workflow_run_id else ""
     archive_name = f"us-market-close-{report_date}{file_suffix}.zip"
     metadata_name = f"us-market-close-{report_date}{file_suffix}-metadata.json"
+    pdf_name = f"us-market-close-{report_date}{file_suffix}.pdf"
     archive_path = build_archive(
         args.site,
         args.data_output,
@@ -114,14 +125,19 @@ def main() -> int:
         + (f" at {target_path}" if target_path else "")
     )
 
-    uploads = [
-        (archive_name, "application/zip", archive_path.read_bytes()),
-        (
-            metadata_name,
-            "application/json",
-            json.dumps(metadata, ensure_ascii=False, indent=2).encode("utf-8"),
-        ),
-    ]
+    uploads: list[tuple[str, str, bytes]] = []
+    if args.pdf is not None:
+        uploads.append((pdf_name, "application/pdf", read_pdf(args.pdf)))
+    uploads.extend(
+        [
+            (archive_name, "application/zip", archive_path.read_bytes()),
+            (
+                metadata_name,
+                "application/json",
+                json.dumps(metadata, ensure_ascii=False, indent=2).encode("utf-8"),
+            ),
+        ]
+    )
     for file_name, mime_type, content in uploads:
         result = gateway.upload_bytes(
             run_id=run_id,

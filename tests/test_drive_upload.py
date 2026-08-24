@@ -6,7 +6,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from scripts.upload_market_report_drive import build_archive, read_metadata
+from scripts.upload_market_report_drive import build_archive, read_metadata, read_pdf
 
 
 class MarketReportDriveUploadTests(unittest.TestCase):
@@ -56,6 +56,19 @@ class MarketReportDriveUploadTests(unittest.TestCase):
             )
             with self.assertRaises(ValueError):
                 read_metadata(site)
+
+    def test_read_pdf_accepts_a_nonempty_pdf(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pdf = Path(temporary_directory) / "report.pdf"
+            pdf.write_bytes(b"%PDF-1.7\n" + b"0" * 2048)
+            self.assertTrue(read_pdf(pdf).startswith(b"%PDF-"))
+
+    def test_read_pdf_rejects_invalid_content(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            pdf = Path(temporary_directory) / "report.pdf"
+            pdf.write_bytes(b"not a pdf")
+            with self.assertRaises(ValueError):
+                read_pdf(pdf)
 
 
 if __name__ == "__main__":
