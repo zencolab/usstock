@@ -34,6 +34,7 @@ concurrency:
 env:
   PYTHONUNBUFFERED: "1"
   XDG_DATA_HOME: ${{ github.workspace }}/.cache/xdg-data
+  DRIVE_GATEWAY_URL: https://script.google.com/macros/s/AKfycbx3JuXMbJOAiiHhUUl3MIQrM2LYlZgCQhkiCNajewFpJxTiRl5cFMXjq45Z_gBqYvHB/exec
 
 jobs:
   schedule-gate:
@@ -76,7 +77,7 @@ jobs:
         run: pip install -r requirements.txt
       - name: Compile, test, and run offline smoke test
         run: |
-          python -m py_compile market_report.py hybrid_data.py hybrid_runtime.py bilingual_runtime.py news_translation.py premium_translation.py ai_translation.py scripts/validate_output.py
+          python -m py_compile market_report.py hybrid_data.py hybrid_runtime.py bilingual_runtime.py news_translation.py premium_translation.py ai_translation.py scripts/validate_output.py scripts/upload_market_report_drive.py hourly_news_bot/src/drive_gateway.py
           python -m unittest discover -s tests -p 'test_*.py' -v
           python market_report.py --mode demo --date 2026-08-10 --top-n 2 --output site-smoke --data-output output-smoke
           python scripts/validate_output.py site-smoke --expected-min 2 --expected-mode demo
@@ -169,3 +170,17 @@ jobs:
           publish_dir: ./publish
           force_orphan: true
           enable_jekyll: false
+      - name: Upload report package to Google Drive
+        env:
+          DRIVE_GATEWAY_TOKEN: ${{ secrets.AGENT_UPLOAD_TOKEN || secrets.DRIVE_GATEWAY_TOKEN }}
+          DRIVE_MARKET_REPORT_OPERATION: ${{ vars.DRIVE_MARKET_REPORT_OPERATION || 'us_stock_news_file' }}
+        shell: bash
+        run: |
+          if [[ -z "${DRIVE_GATEWAY_TOKEN:-}" ]]; then
+            echo "::error::Missing AGENT_UPLOAD_TOKEN or DRIVE_GATEWAY_TOKEN"
+            exit 1
+          fi
+          python scripts/upload_market_report_drive.py \
+            --site site \
+            --data-output output \
+            --archive-output .drive-upload

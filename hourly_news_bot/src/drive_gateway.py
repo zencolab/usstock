@@ -81,14 +81,20 @@ class AppsScriptDriveGateway:
         file_name: str,
         mime_type: str,
         content: bytes,
+        operation: str = "us_stock_news_file",
     ) -> dict[str, Any]:
         if not run_id.strip():
             raise ValueError("run_id is required")
         if not file_name or "/" in file_name or "\\" in file_name:
             raise ValueError("file_name must not contain path separators")
+        operation = operation.strip()
+        if not operation or any(
+            not (character.isalnum() or character in "_-." ) for character in operation
+        ):
+            raise ValueError("operation contains unsupported characters")
         payload = {
             "token": self.token,
-            "operation": "us_stock_news_file",
+            "operation": operation,
             "run_id": run_id,
             "sha256": hashlib.sha256(content).hexdigest(),
             "file_name": file_name,
@@ -108,10 +114,12 @@ class AppsScriptDriveGateway:
         file_name: str,
         mime_type: str,
         content: str,
+        operation: str = "us_stock_news_file",
     ) -> dict[str, Any]:
         return self.upload_bytes(
             run_id=run_id,
             file_name=file_name,
             mime_type=mime_type,
             content=content.encode("utf-8"),
+            operation=operation,
         )

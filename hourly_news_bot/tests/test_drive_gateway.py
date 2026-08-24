@@ -60,6 +60,23 @@ class DriveGatewayTests(unittest.TestCase):
         self.assertEqual(result["status"], "created")
 
     @patch("src.drive_gateway.urlopen")
+    def test_custom_operation_is_sent(self, mocked_urlopen) -> None:
+        mocked_urlopen.return_value = FakeResponse(
+            {"ok": True, "result": {"status": "created", "drive_path": "x/report.zip"}}
+        )
+        gateway = AppsScriptDriveGateway("https://script.google.com/macros/s/test/exec", "secret")
+        gateway.upload_bytes(
+            run_id="20260824-020000Z",
+            file_name="report.zip",
+            mime_type="application/zip",
+            content=b"zip",
+            operation="run_file",
+        )
+        request = mocked_urlopen.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["operation"], "run_file")
+
+    @patch("src.drive_gateway.urlopen")
     def test_gateway_error_is_raised(self, mocked_urlopen) -> None:
         mocked_urlopen.return_value = FakeResponse(
             {"ok": False, "code": "request_failed", "error": "上传令牌无效"}
