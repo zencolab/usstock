@@ -1,8 +1,8 @@
-name: Hourly bilingual US stock news
+name: Bilingual US stock news every two hours
 
 on:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "17 */2 * * *"
   workflow_dispatch:
 
 permissions:
@@ -18,7 +18,7 @@ concurrency:
 jobs:
   collect-translate-upload:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: hourly_news_bot
@@ -43,6 +43,22 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Ensure PDF browser and Chinese fonts
+        shell: bash
+        run: |
+          if ! command -v google-chrome >/dev/null 2>&1 && \
+             ! command -v google-chrome-stable >/dev/null 2>&1 && \
+             ! command -v chromium >/dev/null 2>&1 && \
+             ! command -v chromium-browser >/dev/null 2>&1; then
+            echo "::error::Chrome or Chromium is required for PDF generation"
+            exit 1
+          fi
+          if ! fc-match "Noto Sans CJK SC" | grep -qi "NotoSansCJK"; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+            fc-cache -f >/dev/null
+          fi
+
       - name: Run tests
         run: python -m unittest discover -s tests -v
 
@@ -60,8 +76,27 @@ jobs:
           restore-keys: |
             hourly-news-state-
 
-      - name: Collect, translate and upload
+      - name: Collect, translate, render PDF and upload
         run: python -m src.main
+
+      - name: Validate PDF-only presentation output
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          output = Path("output")
+          pdfs = list(output.glob("us-stock-news-*.pdf"))
+          htmls = list(output.glob("us-stock-news-*.html"))
+          if len(pdfs) != 1:
+              raise SystemExit(f"Expected one PDF, found {len(pdfs)}")
+          if htmls:
+              raise SystemExit(f"HTML output is not allowed: {htmls}")
+          content = pdfs[0].read_bytes()
+          if len(content) < 1024 or not content.startswith(b"%PDF-"):
+              raise SystemExit(f"Invalid PDF: {pdfs[0]}")
+          print(f"Validated PDF-only presentation output: {pdfs[0]} ({len(content)} bytes)")
+          PY
 
       - name: Save dedupe state
         if: always() && hashFiles('hourly_news_bot/state/crawler-state.json') != ''
@@ -70,11 +105,11 @@ jobs:
           path: hourly_news_bot/state
           key: hourly-news-state-${{ github.run_id }}
 
-      - name: Keep generated Markdown, JSON and HTML
+      - name: Keep generated Markdown, JSON and PDF
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bilingual-news-${{ github.run_id }}
+          name: bilingual-news-pdf-${{ github.run_id }}
           path: hourly_news_bot/output/
           if-no-files-found: ignore
           retention-days: 7

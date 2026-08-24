@@ -37,24 +37,24 @@ class DriveGatewayTests(unittest.TestCase):
         self.assertEqual(result["service"], "CNINFO Drive Gateway")
 
     @patch("src.drive_gateway.urlopen")
-    def test_us_stock_news_file_payload_matches_gateway(self, mocked_urlopen) -> None:
+    def test_us_stock_news_pdf_payload_matches_gateway(self, mocked_urlopen) -> None:
         mocked_urlopen.return_value = FakeResponse(
-            {"ok": True, "result": {"status": "created", "drive_path": "x/report.html"}}
+            {"ok": True, "result": {"status": "created", "drive_path": "x/report.pdf"}}
         )
         gateway = AppsScriptDriveGateway("https://script.google.com/macros/s/test/exec", "secret")
-        content = "中英双语".encode("utf-8")
+        content = b"%PDF-1.7\nexample"
         result = gateway.upload_bytes(
             run_id="20260817-135300Z",
-            file_name="report.html",
-            mime_type="text/html",
+            file_name="report.pdf",
+            mime_type="application/pdf",
             content=content,
         )
         request = mocked_urlopen.call_args.args[0]
         payload = json.loads(request.data.decode("utf-8"))
         self.assertEqual(payload["operation"], "us_stock_news_file")
         self.assertEqual(payload["run_id"], "20260817-135300Z")
-        self.assertEqual(payload["file_name"], "report.html")
-        self.assertEqual(payload["mime_type"], "text/html")
+        self.assertEqual(payload["file_name"], "report.pdf")
+        self.assertEqual(payload["mime_type"], "application/pdf")
         self.assertEqual(payload["sha256"], hashlib.sha256(content).hexdigest())
         self.assertEqual(base64.b64decode(payload["content_base64"]), content)
         self.assertEqual(result["status"], "created")

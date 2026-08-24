@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 
 from .crawler import NewsCrawler
 from .drive_gateway import AppsScriptDriveGateway
+from .pdf_renderer import render_pdf
 from .report import render_html, render_markdown
 from .translator import OllamaTranslator
 
@@ -57,7 +58,7 @@ def prune_seen(seen: dict[str, str], now: datetime, days: int = 30) -> dict[str,
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build an hourly bilingual US-stock news digest")
+    parser = argparse.ArgumentParser(description="Build a two-hour bilingual US-stock news digest")
     parser.add_argument("--config", type=Path, default=ROOT / "config" / "sources.yaml")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "output")
     parser.add_argument("--source", action="append", help="Run only the specified source id")
@@ -124,7 +125,8 @@ def main() -> int:
         source_counts=source_counts,
         errors=all_errors,
     )
-    html = render_html(
+    # The HTML string is only a temporary print source inside Chrome. It is never retained or uploaded.
+    print_source = render_html(
         new_items,
         generated_at=now,
         timezone_name=timezone_name,
@@ -134,6 +136,7 @@ def main() -> int:
     report_payload = {
         "generated_at": now.isoformat(),
         "timezone": timezone_name,
+        "schedule": "every_2_hours",
         "source_counts": source_counts,
         "errors": all_errors,
         "items": [item.to_dict() for item in new_items],
@@ -141,14 +144,20 @@ def main() -> int:
     json_text = json.dumps(report_payload, ensure_ascii=False, indent=2)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    for stale_html in args.output_dir.glob("us-stock-news-*.html"):
+        stale_html.unlink()
+
     stamp = now.strftime("%Y%m%d-%H%MZ")
     run_id = now.strftime("%Y%m%d-%H%M%SZ")
     markdown_name = f"us-stock-news-{stamp}.md"
     json_name = f"us-stock-news-{stamp}.json"
-    html_name = f"us-stock-news-{stamp}.html"
-    (args.output_dir / markdown_name).write_text(markdown, encoding="utf-8")
-    (args.output_dir / json_name).write_text(json_text, encoding="utf-8")
-    (args.output_dir / html_name).write_text(html, encoding="utf-8")
+    pdf_name = f"us-stock-news-{stamp}.pdf"
+    markdown_path = args.output_dir / markdown_name
+    json_path = args.output_dir / json_name
+    pdf_path = args.output_dir / pdf_name
+    markdown_path.write_text(markdown, encoding="utf-8")
+    json_path.write_text(json_text, encoding="utf-8")
+    render_pdf(print_source, pdf_path)
 
     for item in new_items:
         seen[item.key] = now.isoformat()
@@ -168,12 +177,12 @@ def main() -> int:
             target_path,
         )
         uploads = [
-            (markdown_name, "text/markdown", markdown),
-            (json_name, "application/json", json_text),
-            (html_name, "text/html", html),
+            (markdown_name, "text/markdown", markdown_path.read_bytes()),
+            (json_name, "application/json", json_path.read_bytes()),
+            (pdf_name, "application/pdf", pdf_path.read_bytes()),
         ]
         for file_name, mime_type, content in uploads:
-            result = gateway.upload_text(
+            result = gateway.upload_bytes(
                 run_id=run_id,
                 file_name=file_name,
                 mime_type=mime_type,
@@ -188,7 +197,13 @@ def main() -> int:
     elif not args.dry_run:
         LOGGER.warning("Apps Script Drive gateway is not configured; files remain local")
 
-    LOGGER.info("Created %s, %s and %s with %s new items", markdown_name, json_name, html_name, len(new_items))
+    LOGGER.info(
+        "Created %s, %s and %s with %s new items",
+        markdown_name,
+        json_name,
+        pdf_name,
+        len(new_items),
+    )
     return 0 if any(source_counts.values()) else 2
 
 
