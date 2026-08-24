@@ -1,0 +1,22 @@
+{
+  "report_date": "2026-08-21",
+  "previous_date": "2026-08-20",
+  "mode": "live",
+  "top_n": 100,
+  "generated_at": "2026-08-24T01:44:16.345332+00:00",
+  "sources": [
+    "Massive grouped daily and batched short interest",
+    "Alpaca batch historical bars",
+    "FRED",
+    "SEC EDGAR",
+    "FINRA",
+    "Alpaca/Benzinga complete three-calendar-month news catalog",
+    "Ollama AI translation (gemma4:cloud, English to Chinese)"
+  ],
+  "translation_provider": "Ollama AI translation (gemma4:cloud, English to Chinese)",
+  "news_catalog_mode": "all_titles",
+  "news_window_start": "2026-05-21",
+  "news_window_end": "2026-08-21",
+  "news_items": 2626,
+  "news_detail_pages": 2626
+}
