@@ -3,30 +3,30 @@ name: Deploy market report to Pages
 on:
   workflow_dispatch:
 
+# 说明：本仓库的站点采用“分支部署”模式 —— 日报/新闻工作流把生成的页面
+# 推送到 gh-pages 分支，GitHub Pages 会自动发布该分支的内容。
+# 因此这里只需向 gh-pages 推送一个空提交，即可触发 Pages 重新发布，
+# 不再使用 github-pages 环境（原先从 main 手动运行会被环境保护规则拒绝：
+# "Branch main is not allowed to deploy to github-pages"）。
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/configure-pages@v5
-
-      - uses: actions/upload-pages-artifact@v3
+      - name: Checkout gh-pages (published site content)
+        uses: actions/checkout@v4
         with:
-          path: site
+          ref: gh-pages
 
-      - name: Deploy GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Trigger GitHub Pages redeploy
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "chore: manual Pages redeploy (workflow_dispatch)"
+          git push origin HEAD:gh-pages
