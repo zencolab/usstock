@@ -2,8 +2,10 @@ name: US market close report
 
 on:
   schedule:
-    - cron: "30 18 * * 1-5"
-      timezone: "America/New_York"
+    # GitHub Actions cron uses UTC. Run both UTC candidates and keep only
+    # the one that maps to 18:30 in New York for the current DST offset.
+    - cron: "30 22 * * 1-5"
+    - cron: "30 23 * * 1-5"
   workflow_dispatch:
     inputs:
       trade_date:
@@ -34,7 +36,34 @@ env:
   XDG_DATA_HOME: ${{ github.workspace }}/.cache/xdg-data
 
 jobs:
+  schedule-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Select the New York 18:30 schedule
+        id: check
+        env:
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != "schedule" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          NY_OFFSET="$(TZ=America/New_York date +%z)"
+          if [[ "$NY_OFFSET" == "-0400" && "$EVENT_SCHEDULE" == "30 22 * * 1-5" ]] ||
+             [[ "$NY_OFFSET" == "-0500" && "$EVENT_SCHEDULE" == "30 23 * * 1-5" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping UTC schedule $EVENT_SCHEDULE for New York offset $NY_OFFSET."
+          fi
+
   build-and-publish:
+    needs: schedule-gate
+    if: needs.schedule-gate.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
