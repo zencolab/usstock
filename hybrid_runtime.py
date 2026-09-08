@@ -8,7 +8,9 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
+import report_asof
 from hybrid_data import AlpacaClient, SecBulkClient
+from runtime_config import resolve_alpaca_feed
 
 
 def _short_interest_batch(massive: Any, symbols: Iterable[str], start: date, end: date) -> pd.DataFrame:
@@ -51,7 +53,6 @@ def install(namespace: dict[str, Any]) -> None:
 
     HttpClient = namespace["HttpClient"]
     MassiveClient = namespace["MassiveClient"]
-    SecClient = namespace["SecClient"]
     FinraClient = namespace["FinraClient"]
     CACHE_DIR = namespace["CACHE_DIR"]
     INDEX_SERIES = namespace["INDEX_SERIES"]
@@ -75,13 +76,13 @@ def install(namespace: dict[str, Any]) -> None:
             raise RuntimeError("SEC_USER_AGENT must identify the application and include a contact email")
 
         massive_rpm = float(os.getenv("MASSIVE_RPM", "5"))
-        alpaca_feed = os.getenv("ALPACA_FEED", "sip").strip().lower() or "sip"
+        # One shared default (iex) for every pipeline; sip needs a paid plan.
+        alpaca_feed = resolve_alpaca_feed()
         sec_rps = float(os.getenv("SEC_RPS", "5"))
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         http = HttpClient(sec_user_agent)
         massive = MassiveClient(massive_key, massive_rpm, http)
         alpaca = AlpacaClient(alpaca_key_id, alpaca_secret, feed=alpaca_feed)
-        sec_parser = SecClient(http)
         sec_bulk = SecBulkClient(sec_user_agent, CACHE_DIR, requests_per_second=sec_rps)
         finra_client = FinraClient(http, CACHE_DIR)
         rules = load_concepts()
@@ -138,8 +139,18 @@ def install(namespace: dict[str, Any]) -> None:
             sec_bundle = sec_payloads.get(str(cik), {}) if cik else {}
             facts_payload = sec_bundle.get("facts") or {}
             submissions = sec_bundle.get("submissions") or {}
-            fundamentals = sec_parser.fundamentals(facts_payload) if facts_payload else {"revenue": None, "eps": None, "shares_outstanding": None}
-            ownership = sec_parser.ownership_summary(submissions, cik) if submissions else {"summary": "SEC 最近申报数据不可用。", "filings": []}
+            # Point-in-time: ignore anything filed after the report date so a
+            # backfilled report matches what was public on that day.
+            fundamentals = (
+                report_asof.fundamentals(facts_payload, as_of=config.report_date)
+                if facts_payload
+                else {"revenue": None, "eps": None, "shares_outstanding": None}
+            )
+            ownership = (
+                report_asof.ownership_summary(submissions, cik, as_of=config.report_date)
+                if submissions
+                else {"summary": "SEC 最近申报数据不可用。", "filings": []}
+            )
             shares = fundamentals.get("shares_outstanding")
             close = clean_float(row["close"])
             market_cap = close * shares if close is not None and shares else None
@@ -174,6 +185,7 @@ def install(namespace: dict[str, Any]) -> None:
         metadata_file = config.output / "metadata.json"
         metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
         metadata["sources"] = ["Massive grouped daily and batched short interest", "Alpaca batch historical bars", "FRED", "SEC EDGAR", "FINRA"]
+        metadata["sec_as_of"] = config.report_date.isoformat()
         metadata_file.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
 
     namespace["live_payload"] = live_payload
