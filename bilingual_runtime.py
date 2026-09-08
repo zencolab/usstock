@@ -5,14 +5,13 @@ import os
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader, select_autoescape
-
 from news_translation import (
     AlpacaNewsClient,
     news_window,
     prepare_news_catalog,
 )
 from premium_translation import CachedAiTranslator, bilingual_news, collect_news_sources
+from template_env import build_environment
 
 
 def install(namespace: dict[str, Any]) -> None:
@@ -115,12 +114,10 @@ def install(namespace: dict[str, Any]) -> None:
 
         news_dir = config.output / "news"
         news_dir.mkdir(parents=True, exist_ok=True)
-        env = Environment(
-            loader=FileSystemLoader(template_dir),
-            autoescape=select_autoescape(["html", "xml"]),
-            trim_blocks=True,
-            lstrip_blocks=True,
-        )
+        # Autoescaping is enabled unconditionally here. select_autoescape()
+        # matched on the last suffix (".j2"), so these templates used to be
+        # rendered without escaping at all.
+        env = build_environment(template_dir)
         detail_template = env.get_template("news.html.j2")
         seen_pages: set[str] = set()
         detail_count = 0
