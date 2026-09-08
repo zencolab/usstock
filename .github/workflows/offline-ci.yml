@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 concurrency:
   group: offline-ci-${{ github.ref }}
@@ -20,73 +21,63 @@ concurrency:
 jobs:
   offline-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
 
-      - name: Install dependencies
+      # Runs byte-compilation, the assembled-source compile, every offline test
+      # suite and the demo smoke test. Identical to the local command.
+      - name: Run the offline verification suite
+        run: bash scripts/ci_offline_checks.sh
+
+      - name: Publish the phase results to the run summary
+        if: always()
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          if [ -f hourly_news_bot/requirements.txt ]; then
-            pip install -r hourly_news_bot/requirements.txt
-          fi
+          {
+            echo "### Offline verification phases"
+            echo
+            echo '```'
+            cat ci-status.txt 2>/dev/null || echo "no phase results were recorded"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Byte-compile the review fix modules
-        run: |
-          python -m py_compile \
-            template_env.py \
-            runtime_config.py \
-            report_asof.py \
-            russell2000_market_report/universe_snapshot.py \
-            hourly_news_bot/src/state.py \
-            scripts/run_offline_tests.py \
-            scripts/assert_escaped_output.py
-
-      - name: Byte-compile the existing pipeline modules
-        run: |
-          python -m py_compile \
-            market_report.py \
-            hybrid_data.py \
-            hybrid_runtime.py \
-            bilingual_runtime.py \
-            news_translation.py \
-            premium_translation.py \
-            ai_translation.py \
-            russell2000_market_report/universe.py \
-            russell2000_market_report/runtime.py \
-            hourly_news_bot/src/main.py \
-            scripts/validate_output.py \
-            scripts/render_market_report_pdf.py
-
-      - name: Run the code-review regression tests
-        run: python scripts/run_offline_tests.py --regressions
-
-      - name: Run every offline test suite
-        run: python scripts/run_offline_tests.py
-
-      - name: Offline demo report smoke test
-        id: demo
+      - name: Report the phase results on the pull request
+        if: always() && github.event_name == 'pull_request'
         continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
-          python market_report.py --mode demo --top-n 2 \
-            --output site-smoke --data-output output-smoke
+          {
+            echo "### Offline verification — \`${COMMIT_SHA}\`"
+            echo
+            echo '```'
+            cat ci-status.txt 2>/dev/null || echo "no phase results were recorded"
+            echo '```'
+            echo
+            echo "<details><summary>Log tail</summary>"
+            echo
+            echo '```'
+            tail -n 200 ci-log.txt 2>/dev/null || echo "no log was recorded"
+            echo '```'
+            echo
+            echo "</details>"
+          } > ci-comment.md
+          gh pr comment "${PR_NUMBER}" --body-file ci-comment.md
 
-      - name: Scan the demo output for unsafe link schemes
-        if: steps.demo.outcome == 'success'
-        run: python scripts/assert_escaped_output.py site-smoke
-
-      - name: Upload smoke-test output
+      - name: Upload the verification log and smoke output
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: offline-smoke-${{ github.run_id }}
+          name: offline-verification-${{ github.run_id }}
           path: |
+            ci-log.txt
+            ci-status.txt
             site-smoke
             output-smoke
           retention-days: 7
