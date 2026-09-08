@@ -1,0 +1,37 @@
+{
+  "report_date": "2026-09-04",
+  "previous_date": "2026-09-03",
+  "mode": "live",
+  "top_n": 100,
+  "generated_at": "2026-09-08T00:53:56.059985+00:00",
+  "sources": [
+    "Massive grouped daily and batched short interest",
+    "Alpaca batch historical bars",
+    "FRED",
+    "SEC EDGAR",
+    "FINRA",
+    "Alpaca/Benzinga complete three-calendar-month news catalog",
+    "Ollama AI translation (gemma4:cloud, English to Chinese)",
+    "iShares IWM holdings (Russell 2000 tracking proxy)"
+  ],
+  "translation_provider": "Ollama AI translation (gemma4:cloud, English to Chinese)",
+  "news_catalog_mode": "all_titles",
+  "news_window_start": "2026-06-04",
+  "news_window_end": "2026-09-04",
+  "news_items": 2715,
+  "news_detail_pages": 2715,
+  "universe_name": "Russell 2000",
+  "universe_source": "iShares IWM holdings CSV",
+  "universe_method": "IWM holdings used as a practical Russell 2000 tracking proxy",
+  "universe_as_of": "Sep 04, 2026",
+  "universe_constituents": 1953,
+  "universe_matched_by_date": {
+    "2026-09-04": 1942,
+    "2026-09-03": 1942
+  },
+  "ranking_market_data_by_date": {
+    "2026-09-04": "Massive grouped daily",
+    "2026-09-03": "Massive grouped daily"
+  },
+  "selection_rule": "Rank eligible Russell 2000 constituents by adjusted close versus prior adjusted close; select top 100 gainers and top 100 losers"
+}
