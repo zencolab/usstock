@@ -44,20 +44,22 @@ def write_outputs(config: RunConfig, payload: dict[str, Any]) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(TEMPLATES / "style.css", site / "assets" / "style.css")
 
-    env = Environment(
-        loader=FileSystemLoader(TEMPLATES),
-        autoescape=select_autoescape(["html", "xml"]),
-        trim_blocks=True,
-        lstrip_blocks=True,
+    # Autoescaping is enabled unconditionally by build_environment().
+    # select_autoescape(["html", "xml"]) matched on the last suffix (".j2"),
+    # so these templates used to be rendered without escaping at all.
+    from template_env import build_environment
+
+    env = build_environment(
+        TEMPLATES,
+        filters={
+            "money": money,
+            "number": number,
+            "integer": integer,
+            "ratio": ratio,
+            "pct": pct,
+            "pct_plain": pct_plain,
+        },
     )
-    env.filters.update({
-        "money": money,
-        "number": number,
-        "integer": integer,
-        "ratio": ratio,
-        "pct": pct,
-        "pct_plain": pct_plain,
-    })
     context = {
         "report_date": config.report_date.isoformat(),
         "generated_at": datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M %Z"),
