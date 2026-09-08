@@ -5,13 +5,18 @@ import io
 import json
 import os
 import re
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
 import requests
+
+try:  # package import
+    from . import universe_snapshot
+except ImportError:  # pragma: no cover - script-style execution
+    import universe_snapshot  # type: ignore[no-redef]
 
 DEFAULT_HOLDINGS_URL = (
     "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/"
@@ -26,6 +31,10 @@ class UniverseSnapshot:
     as_of: str
     fetched_at: str
     method: str
+    # Point-in-time metadata. Defaults keep older callers working unchanged.
+    point_in_time: bool = True
+    from_snapshot: bool = False
+    warnings: tuple[str, ...] = field(default_factory=tuple)
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -34,6 +43,9 @@ class UniverseSnapshot:
             "as_of": self.as_of,
             "fetched_at": self.fetched_at,
             "method": self.method,
+            "point_in_time": self.point_in_time,
+            "from_snapshot": self.from_snapshot,
+            "warnings": list(self.warnings),
         }
 
 
@@ -103,6 +115,13 @@ def filter_grouped_frame(frame: pd.DataFrame, symbols: Iterable[str]) -> pd.Data
     return frame[normalized.isin(universe)].copy()
 
 
+def _universe_bounds() -> tuple[int, int]:
+    return (
+        int(os.getenv("RUSSELL2000_MIN_CONSTITUENTS", "1500")),
+        int(os.getenv("RUSSELL2000_MAX_CONSTITUENTS", "2500")),
+    )
+
+
 def _load_cache(path: Path, *, minimum: int, maximum: int) -> UniverseSnapshot | None:
     if not path.is_file():
         return None
@@ -143,9 +162,64 @@ def _load_override(path: Path, *, minimum: int, maximum: int) -> UniverseSnapsho
     )
 
 
-def load_russell2000_universe(cache_dir: Path, *, force_refresh: bool = False) -> UniverseSnapshot:
-    minimum = int(os.getenv("RUSSELL2000_MIN_CONSTITUENTS", "1500"))
-    maximum = int(os.getenv("RUSSELL2000_MAX_CONSTITUENTS", "2500"))
+def load_russell2000_universe(
+    cache_dir: Path,
+    *,
+    force_refresh: bool = False,
+    report_date: date | None = None,
+) -> UniverseSnapshot:
+    """Load the Russell 2000 tracking universe.
+
+    When ``report_date`` is given, a stored point-in-time snapshot for that
+    date is preferred and a fresh download is recorded as the snapshot for
+    that date. Without ``report_date`` the behaviour is unchanged: the latest
+    published IWM holdings are used.
+    """
+
+    if report_date is None:
+        return _load_latest_universe(cache_dir, force_refresh=force_refresh)
+    return _load_point_in_time_universe(
+        cache_dir, report_date, force_refresh=force_refresh
+    )
+
+
+def _load_point_in_time_universe(
+    cache_dir: Path, report_date: date, *, force_refresh: bool = False
+) -> UniverseSnapshot:
+    minimum, maximum = _universe_bounds()
+
+    def fetch_latest() -> dict[str, object]:
+        latest = _load_latest_universe(cache_dir, force_refresh=force_refresh)
+        return {
+            "symbols": sorted(latest.symbols),
+            "source": latest.source,
+            "holdings_as_of": latest.as_of,
+        }
+
+    resolved = universe_snapshot.resolve_universe(cache_dir, report_date, fetch_latest)
+    symbols = validate_universe(resolved["symbols"], minimum=minimum, maximum=maximum)
+    warnings = tuple(str(message) for message in (resolved.get("warnings") or ()))
+    for message in warnings:
+        print(f"warning: {message}")
+    from_snapshot = bool(resolved.get("from_snapshot"))
+    return UniverseSnapshot(
+        symbols=symbols,
+        source=str(resolved.get("source") or "iShares IWM holdings CSV"),
+        as_of=str(resolved.get("holdings_as_of") or ""),
+        fetched_at=datetime.now(UTC).isoformat(),
+        method=(
+            f"stored point-in-time universe snapshot for {report_date.isoformat()}"
+            if from_snapshot
+            else "IWM holdings used as a practical Russell 2000 tracking proxy"
+        ),
+        point_in_time=bool(resolved.get("point_in_time")),
+        from_snapshot=from_snapshot,
+        warnings=warnings,
+    )
+
+
+def _load_latest_universe(cache_dir: Path, *, force_refresh: bool = False) -> UniverseSnapshot:
+    minimum, maximum = _universe_bounds()
     override = os.getenv("RUSSELL2000_CONSTITUENTS_FILE", "").strip()
     if override:
         return _load_override(Path(override).expanduser(), minimum=minimum, maximum=maximum)
