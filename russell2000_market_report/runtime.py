@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -11,6 +11,7 @@ import pandas as pd
 import requests
 
 from hybrid_data import AlpacaClient
+from runtime_config import resolve_alpaca_feed
 from russell2000_market_report.universe import (
     UniverseSnapshot,
     filter_grouped_frame,
@@ -19,6 +20,28 @@ from russell2000_market_report.universe import (
 )
 
 _PATCH_LOCK = threading.Lock()
+
+
+def config_report_date(config: Any) -> date | None:
+    """Best-effort report date from the pipeline config.
+
+    Used to request a point-in-time constituent universe instead of the
+    latest published IWM holdings, which would introduce survivorship bias
+    into historical backfills.
+    """
+
+    for attribute in ("report_date", "trade_date", "date"):
+        value = getattr(config, attribute, None)
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        if isinstance(value, str) and value.strip():
+            try:
+                return date.fromisoformat(value.strip()[:10])
+            except ValueError:
+                continue
+    return None
 
 
 def _brand_html(content: str) -> str:
@@ -110,7 +133,10 @@ def install(namespace: dict[str, Any], project_root: Path) -> None:
     }
 
     def live_payload(config: Any) -> dict[str, Any]:
-        snapshot = load_russell2000_universe(project_root / ".cache" / "universe")
+        snapshot = load_russell2000_universe(
+            project_root / ".cache" / "universe",
+            report_date=config_report_date(config),
+        )
         original_grouped_daily = MassiveClient.grouped_daily
         matched: dict[str, int] = {}
         market_sources: dict[str, str] = {}
@@ -141,8 +167,9 @@ def install(namespace: dict[str, Any], project_root: Path) -> None:
                         "credentials are missing"
                     ) from exc
                 if fallback_client is None:
-                    feed = os.getenv("ALPACA_FEED", "iex").strip().lower() or "iex"
-                    fallback_client = AlpacaClient(key_id, secret_key, feed=feed)
+                    fallback_client = AlpacaClient(
+                        key_id, secret_key, feed=resolve_alpaca_feed()
+                    )
                 status_code = getattr(getattr(exc, "response", None), "status_code", "403")
                 source_label = (
                     f"Alpaca {fallback_client.feed.upper()} daily bars "
@@ -189,6 +216,9 @@ def install(namespace: dict[str, Any], project_root: Path) -> None:
             "as_of": snapshot.as_of,
             "matched": matched,
             "market_data_by_date": market_sources,
+            "point_in_time": snapshot.point_in_time,
+            "from_snapshot": snapshot.from_snapshot,
+            "warnings": list(snapshot.warnings),
         }
         return payload
 
@@ -202,11 +232,15 @@ def install(namespace: dict[str, Any], project_root: Path) -> None:
         universe_count = 0
         universe_as_of = ""
         universe_method = "demo mode; live runs use validated iShares IWM holdings"
+        universe_point_in_time = True
+        universe_warnings: list[str] = []
         if isinstance(snapshot, UniverseSnapshot):
             universe_source = snapshot.source
             universe_count = len(snapshot.symbols)
             universe_as_of = snapshot.as_of
             universe_method = snapshot.method
+            universe_point_in_time = snapshot.point_in_time
+            universe_warnings = list(snapshot.warnings)
             label = "iShares IWM holdings (Russell 2000 tracking proxy)"
             if label not in sources:
                 sources.append(label)
@@ -227,6 +261,8 @@ def install(namespace: dict[str, Any], project_root: Path) -> None:
                 "universe_as_of": universe_as_of,
                 "universe_constituents": universe_count,
                 "universe_matched_by_date": state.get("matched") or {},
+                "universe_point_in_time": universe_point_in_time,
+                "universe_warnings": universe_warnings,
                 "ranking_market_data_by_date": market_sources,
                 "selection_rule": (
                     f"Rank eligible Russell 2000 constituents by adjusted close versus prior "

@@ -83,9 +83,9 @@
             {% if article.source %}<span>{{ article.source }}</span>{% endif %}
             {% if article.author %}<span>{{ article.author }}</span>{% endif %}
           </div>
-          <h3><a href="{{ article.detail_url }}">{{ article.headline_zh }}</a></h3>
+          <h3><a href="{{ article.detail_url|safe_external_url }}">{{ article.headline_zh }}</a></h3>
           <p class="news-title-en">{{ article.headline_en }}</p>
-          <a class="source-link" href="{{ article.detail_url }}">查看英汉对照摘要 →</a>
+          <a class="source-link" href="{{ article.detail_url|safe_external_url }}">查看英汉对照摘要 →</a>
         </li>
         {% endfor %}
       </ol>
@@ -106,7 +106,7 @@
       <article>
         <h2>空头持仓数量</h2>
         <div class="card chart">{{ stock.short_interest_chart|safe }}</div>
-        <p class="copy">Short interest 按监管发布节奏更新，通常每月两次，因此折线不会每天变化。</p>
+        <p class="copy">Short interest 按监管发布节奉更新，通常每月两次，因此折线不会每天变化。</p>
       </article>
     </div>
   </section>
@@ -119,7 +119,7 @@
         {% if stock.ownership.filings %}
         <ul class="filings">
           {% for filing in stock.ownership.filings %}
-          <li><a href="{{ filing.url }}" rel="noopener noreferrer">{{ filing.form }} · {{ filing.filing_date }}</a></li>
+          <li><a href="{{ filing.url|safe_external_url }}" rel="noopener noreferrer">{{ filing.form }} · {{ filing.filing_date }}</a></li>
           {% endfor %}
         </ul>
         {% else %}<p class="copy">最近申报列表中没有匹配的 13D/13G 或 Form 4。</p>{% endif %}

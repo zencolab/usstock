@@ -15,6 +15,14 @@ from .crawler import NewsCrawler
 from .drive_gateway import AppsScriptDriveGateway
 from .pdf_renderer import render_pdf
 from .report import render_html, render_markdown
+from .state import (
+    delivered_keys,
+    load_state,
+    mark_delivered,
+    mark_pending,
+    prune,
+    save_state,
+)
 from .translator import OllamaTranslator
 
 LOGGER = logging.getLogger(__name__)
@@ -32,17 +40,23 @@ def load_sources(path: Path, selected: set[str] | None = None) -> list[dict[str,
 
 
 def load_local_state(path: Path) -> dict[str, Any]:
+    """Deprecated: kept for compatibility. Use state.load_state instead."""
+
     if not path.exists():
         return {"seen": {}}
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def save_local_state(path: Path, state: dict[str, Any]) -> None:
+    """Deprecated: kept for compatibility. Use state.save_state instead."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def prune_seen(seen: dict[str, str], now: datetime, days: int = 30) -> dict[str, str]:
+    """Deprecated: kept for compatibility. Use state.prune instead."""
+
     cutoff = now - timedelta(days=days)
     result: dict[str, str] = {}
     for key, timestamp in seen.items():
@@ -85,8 +99,10 @@ def main() -> int:
     )
 
     local_state_path = ROOT / "state" / "crawler-state.json"
-    state = load_local_state(local_state_path)
-    seen = prune_seen(dict(state.get("seen", {})), now)
+    # Only confirmed-delivered items are skipped. A batch that was fetched but
+    # never delivered stays retryable instead of being silently dropped.
+    state = prune(load_state(local_state_path), now=now)
+    delivered = delivered_keys(state)
 
     crawler = NewsCrawler(
         user_agent=os.getenv(
@@ -102,7 +118,7 @@ def main() -> int:
     finally:
         crawler.close()
 
-    new_items = [item for item in fetched if item.key not in seen]
+    new_items = [item for item in fetched if item.key not in delivered]
     new_items.sort(key=lambda item: item.published_at or datetime.min.replace(tzinfo=UTC), reverse=True)
 
     translation_errors: list[str] = []
@@ -159,10 +175,13 @@ def main() -> int:
     json_path.write_text(json_text, encoding="utf-8")
     render_pdf(print_source, pdf_path)
 
-    for item in new_items:
-        seen[item.key] = now.isoformat()
-    state = {"updated_at": now.isoformat(), "seen": prune_seen(seen, now)}
-    save_local_state(local_state_path, state)
+    new_keys = [item.key for item in new_items]
+    # Record the batch as fetched-but-not-yet-delivered *before* attempting
+    # delivery. If the upload below fails, or the job is cancelled, the next
+    # run still sees these items as undelivered and retries them.
+    state["updated_at"] = now.isoformat()
+    mark_pending(state, new_keys, now=now)
+    save_state(local_state_path, state)
 
     if not args.dry_run and gateway:
         info = gateway.ping()
@@ -194,8 +213,24 @@ def main() -> int:
                 result.get("drive_path", file_name),
                 result.get("web_view_link", ""),
             )
+        # Every upload in the batch succeeded, so the items are now delivered
+        # and may be skipped from here on.
+        mark_delivered(state, new_keys, now=now)
+        state["updated_at"] = datetime.now(UTC).isoformat()
+        save_state(local_state_path, state)
+        LOGGER.info("Marked %s item(s) as delivered", len(new_keys))
     elif not args.dry_run:
         LOGGER.warning("Apps Script Drive gateway is not configured; files remain local")
+        # There is no remote delivery target in this mode, so the local files
+        # are the deliverable and the batch is complete.
+        mark_delivered(state, new_keys, now=now)
+        state["updated_at"] = datetime.now(UTC).isoformat()
+        save_state(local_state_path, state)
+    else:
+        LOGGER.info(
+            "Dry run: %s item(s) stay pending and will be retried on the next real run",
+            len(new_keys),
+        )
 
     LOGGER.info(
         "Created %s, %s and %s with %s new items",

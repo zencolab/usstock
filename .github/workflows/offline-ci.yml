@@ -1,0 +1,84 @@
+name: Offline tests
+
+# Verification only. This workflow never touches production data:
+# no market-data API keys, no Ollama, no Drive upload, no Pages publish.
+
+on:
+  push:
+    branches-ignore:
+      - gh-pages
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: offline-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Runs byte-compilation, the assembled-source compile, every offline test
+      # suite and the demo smoke test. Identical to the local command.
+      - name: Run the offline verification suite
+        run: bash scripts/ci_offline_checks.sh
+
+      - name: Publish the phase results to the run summary
+        if: always()
+        run: |
+          {
+            echo "### Offline verification phases"
+            echo
+            echo '```'
+            cat ci-status.txt 2>/dev/null || echo "no phase results were recorded"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report the phase results on the pull request
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          {
+            echo "### Offline verification — \`${COMMIT_SHA}\`"
+            echo
+            echo '```'
+            cat ci-status.txt 2>/dev/null || echo "no phase results were recorded"
+            echo '```'
+            echo
+            echo "<details><summary>Log tail</summary>"
+            echo
+            echo '```'
+            tail -n 200 ci-log.txt 2>/dev/null || echo "no log was recorded"
+            echo '```'
+            echo
+            echo "</details>"
+          } > ci-comment.md
+          gh pr comment "${PR_NUMBER}" --body-file ci-comment.md
+
+      - name: Upload the verification log and smoke output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-verification-${{ github.run_id }}
+          path: |
+            ci-log.txt
+            ci-status.txt
+            site-smoke
+            output-smoke
+          retention-days: 7
+          if-no-files-found: ignore
