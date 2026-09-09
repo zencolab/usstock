@@ -151,6 +151,35 @@ output/
     short_interest.csv
 ```
 
+## 离线验证
+
+下列检查都不需要任何凭据，也不会触发真实采集、Drive 上传或 Pages 发布。
+
+```bash
+# 一行命令跑完全部检查：拼接源编译、三套测试、demo 渲染、输出安全扫描
+bash scripts/ci_offline_checks.sh
+
+# 只跑测试（共 77 个用例：根 37 / 罗素 2000 16 / 新闻机器人 24）
+python scripts/run_offline_tests.py
+
+# 只跑代码审阅回归用例（41 个）
+python scripts/run_offline_tests.py --regressions
+
+# 只跑其中一套：root | russell | news
+python scripts/run_offline_tests.py --only russell
+```
+
+`.github/workflows/offline-ci.yml` 会在每次 push 和 Pull Request 上执行同一个脚本。PR 会收到一条评论，列出各阶段状态和日志尾部；`ci-log.txt`、`ci-status.txt` 以及 demo 产物作为 Artifact 保留 7 天。`scripts/compile_assembled_source.py` 只做拼接与编译，不执行 `market_report_src/part_*.inc`，因此能在不联网的情况下发现片段级语法错误。
+
+## 运维须知
+
+1. **模板转义**：所有 `*.html.j2` 统一通过 `template_env.build_environment()` 渲染，强制 `autoescape=True`。外链必须经过 `safe_external_url` 过滤器；除 `http`、`https`、`mailto` 以外的协议（含 `javascript:`、`data:`、`vbscript:`）会被替换为 `#`。新增模板时请沿用同一个入口，不要再自行构造 Jinja2 Environment。
+2. **SEC point-in-time**：基本面、受益所有权和内部人窗口按**报告日**而不是运行日计算（`report_asof`），`metadata.json` 新增 `sec_as_of`。补跑历史交易日不会再混入该日之后才提交的披露。
+3. **罗素 2000 成分快照**：每个报告日的成分股会落盘到 `.cache/universe/universe-snapshots/russell2000-<日期>.json` 并优先复用。补跑没有快照的历史日期时会退回最新 IWM 持仓，并在 `metadata.json` 的 `universe_point_in_time` 与 `universe_warnings` 中显式标注幸存者偏差；需要可复现的历史结果，请保留 `.cache` 目录或提前生成快照。
+4. **`ALPACA_FEED`**：默认值由 `runtime_config.resolve_alpaca_feed()` 统一为 `iex`，主报告与罗素 2000 子项目不再各自取值；填入不受支持的值会直接报错，而不是静默降级。
+5. **新闻机器人状态**：`state/crawler-state.json` 升级为 v2，条目区分 `pending` 与 `delivered`，旧版 `seen` 列表会自动迁移为 `delivered`。只有全部上传成功后才标记 `delivered`，网关失败的条目保持 `pending` 供下一轮重试，`--dry-run` 不会写入状态。因此某次 Drive 上传失败不再造成永久丢稿。
+6. **PDF 渲染**：`CHROME_BIN` 一旦设置就优先于 PATH 搜索（GitHub 托管 runner 默认导出该变量）；需要指定其他浏览器时用 `--browser` 或该变量。
+
 ## 数据授权提示
 
 免费 API 并不自动授予公开再分发权。当前 GitHub Pages 是公开网页；正式长期公开展示前，请确认 Massive、Alpaca/Benzinga及其他数据源套餐允许相应的个人展示或再分发用途。新闻页只展示标题和数据源摘要并链接英文原文，不复制完整文章。SEC、FINRA和FRED仍需遵守各自使用政策。
