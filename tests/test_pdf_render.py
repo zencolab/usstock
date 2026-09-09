@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,10 +26,31 @@ class MarketReportPdfTests(unittest.TestCase):
             self.assertIn("@page { size: A4 landscape", source)
             self.assertIn("Drive 预览版", source)
 
+    # CHROME_BIN is cleared on purpose. GitHub-hosted runners export it, and
+    # find_browser() honours it before searching PATH, so without this the
+    # mocked shutil.which is never reached and the test only passes on
+    # machines that happen to have no CHROME_BIN set.
+    @patch.dict(os.environ, {"CHROME_BIN": ""})
     @patch("scripts.render_market_report_pdf.shutil.which")
     def test_find_browser_uses_available_chrome(self, mocked_which) -> None:
         mocked_which.side_effect = lambda name: "/usr/bin/google-chrome" if name == "google-chrome" else None
         self.assertEqual(find_browser(), "/usr/bin/google-chrome")
+
+    @patch.dict(os.environ, {"CHROME_BIN": "/opt/google/chrome/google-chrome"})
+    @patch("scripts.render_market_report_pdf.shutil.which")
+    def test_find_browser_prefers_chrome_bin_over_the_search_path(self, mocked_which) -> None:
+        mocked_which.side_effect = lambda name: (
+            "/opt/google/chrome/google-chrome"
+            if name == "/opt/google/chrome/google-chrome"
+            else "/usr/bin/google-chrome"
+        )
+        self.assertEqual(find_browser(), "/opt/google/chrome/google-chrome")
+
+    @patch.dict(os.environ, {"CHROME_BIN": ""})
+    @patch("scripts.render_market_report_pdf.shutil.which", return_value=None)
+    def test_find_browser_fails_loudly_when_no_browser_is_installed(self, _mocked_which) -> None:
+        with self.assertRaises(RuntimeError):
+            find_browser()
 
     def test_validate_pdf_accepts_pdf_signature(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
